@@ -186,17 +186,17 @@
 (defun is-healthy-battery (bat)
   (let ((comp-state (alist-get 'component-state bat))
         (relay-state (alist-get 'relay-state bat)))
-    (and (or (eq comp-state 'idle)
+    (and (or (eq comp-state 'ready)
              (eq comp-state 'charging)
              (eq comp-state 'discharging))
-         (eq relay-state 'closed))))
+         (eq relay-state 'relay-closed))))
 
 (defun is-healthy-meter (met)
-  (eq (alist-get 'component-state met) 'ok))
+  (eq (alist-get 'component-state met) 'ready))
 
 (defun is-healthy-inverter (inv)
   (let ((comp-state (alist-get 'component-state inv)))
-    (or (eq comp-state 'idle)
+    (or (eq comp-state 'ready)
         (eq comp-state 'charging)
         (eq comp-state 'discharging))))
 
@@ -206,14 +206,14 @@
     (and (or (eq comp-state 'ready)
              (eq comp-state 'charging)
              (eq comp-state 'discharging))
-         (eq cable-state 'ev-locked))))
+         (eq cable-state 'ev-charging-cable-locked-at-ev))))
 
 (defun power->component-state (power)
   (cond
     ((not (numberp power)) 'error)
     ((> power 0.0) 'charging)
     ((< power 0.0) 'discharging)
-    (:else         'idle)))
+    (:else         'ready)))
 
 (defun power->ev-component-state (power)
   (cond

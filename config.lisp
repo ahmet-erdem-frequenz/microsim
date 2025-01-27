@@ -65,15 +65,15 @@
                          (voltage          . 800.0)
                          (rated-bounds     . (-30000.0 30000.0))
                          (exclusion-bounds . (0.0 0.0))
-                         (component-state  . idle)
-                         (relay-state      . closed)))
+                         (component-state  . ready)
+                         (relay-state      . relay-closed)))
 
-(setq meter-defaults '((component-state . ok)))
+(setq meter-defaults '((component-state . ready)))
 
-(setq battery-inverter-defaults `((component-state . idle)
+(setq battery-inverter-defaults `((component-state . ready)
                                   (rated-bounds    . (-30000.0 30000.0))))
 
-(setq solar-inverter-defaults `((component-state . idle)
+(setq solar-inverter-defaults `((component-state . ready)
                                 (rated-bounds    . (-30000.0 0.0))))
 
 (setq ev-charger-defaults
@@ -86,7 +86,7 @@
           (soc-lower       . 0.0)
           (soc-upper       . 100.0)
           (component-state . ready)
-          (cable-state     . ev-locked)
+          (cable-state     . ev-charging-cable-locked-at-ev)
           (rated-bounds    . (0.0 ,max-power))
           (capacity        . 30000.0)
           (inclusion-lower . 0.0)
@@ -123,14 +123,14 @@
                                           (make-ev-charger)
                                           (make-ev-charger
                                            :config '((initial-soc . 10.0)
-                                                     (cable-state . ev-locked)))))
+                                                     (cable-state . ev-charging-cable-locked-at-ev)))))
 
                             ;; solar inverters
                             (make-meter
                              :successors (list
                                           (make-solar-inverter
                                            :sunlight% 100.0
-                                           :config '((component-state . idle)
+                                           :config '((component-state . ready)
                                                      (rated-bounds . (-8000.0 0.0))))
                                           (make-solar-inverter :sunlight% 60.0)))
 

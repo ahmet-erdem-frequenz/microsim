@@ -3,6 +3,7 @@ mod proto;
 mod server;
 mod timeout_tracker;
 
+use proto::microgrid::v1::microgrid_server;
 use tonic::transport::Server;
 
 #[tokio::main(flavor = "current_thread")]
@@ -17,9 +18,7 @@ async fn main() {
 
     let server = server::MicrogridServer::new(config);
     Server::builder()
-        .add_service(proto::microgrid::microgrid_server::MicrogridServer::new(
-            server,
-        ))
+        .add_service(microgrid_server::MicrogridServer::new(server))
         .serve(socket_addr.parse().unwrap())
         .await
         .unwrap();
