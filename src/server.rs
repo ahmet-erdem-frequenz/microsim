@@ -94,11 +94,13 @@ impl microgrid_server::Microgrid for MicrogridServer {
         let components = self.config.components(request).unwrap();
         Ok(tonic::Response::new(components))
     }
+
     async fn list_connections(
         &self,
         _request: tonic::Request<ListConnectionsRequest>,
     ) -> std::result::Result<tonic::Response<ListConnectionsResponse>, tonic::Status> {
-        let connections = self.config.connections().unwrap();
+        let request = _request.into_inner();
+        let connections = self.config.connections(request).unwrap();
         Ok(tonic::Response::new(connections))
     }
 

@@ -20,7 +20,7 @@ use crate::proto::{
     },
     microgrid::v1::{
         GetMicrogridMetadataResponse, ListComponentsRequest, ListComponentsResponse,
-        ListConnectionsResponse, ReceiveComponentDataStreamResponse,
+        ListConnectionsRequest, ListConnectionsResponse, ReceiveComponentDataStreamResponse,
     },
 };
 use notify::{RecommendedWatcher, Watcher};
@@ -481,7 +481,10 @@ Invalid socket-addr.  Add a config line in this format:
         })
     }
 
-    pub fn connections(&self) -> Result<ListConnectionsResponse, Error> {
+    pub fn connections(
+        &self,
+        request: ListConnectionsRequest,
+    ) -> Result<ListConnectionsResponse, Error> {
         let alist = self.symbols.connections_alist.get()?;
         Ok(ListConnectionsResponse {
             connections: alist
@@ -490,6 +493,11 @@ Invalid socket-addr.  Add a config line in this format:
                     source_component_id: x.car().and_then(|x| x.as_int()).unwrap() as u64,
                     destination_component_id: x.cdr().and_then(|x| x.as_int()).unwrap() as u64,
                     ..Default::default()
+                })
+                .filter(|x| {
+                    (request.starts.contains(&x.source_component_id) || request.starts.is_empty())
+                        && (request.ends.contains(&x.destination_component_id)
+                            || request.ends.is_empty())
                 })
                 .collect(),
         })
