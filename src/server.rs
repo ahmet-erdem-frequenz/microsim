@@ -28,7 +28,7 @@ pub struct MicrogridServer {
 
 impl MicrogridServer {
     pub fn new(config: Config) -> Self {
-        let bat_inv_ids = config
+        let bat_inverter_ids = config
             .components(ListComponentsRequest::default())
             .unwrap()
             .components
@@ -44,10 +44,14 @@ impl MicrogridServer {
             })
             .map(|c| c.id)
             .collect();
+
+        let timeout_tracker =
+            crate::timeout_tracker::TimeoutTracker::new(config.retain_requests_duration());
+
         let new = Self {
             config,
-            timeout_tracker: crate::timeout_tracker::TimeoutTracker::new(),
-            bat_inverter_ids: bat_inv_ids,
+            timeout_tracker,
+            bat_inverter_ids,
         };
 
         new.start_timeout_tracker();
@@ -60,7 +64,7 @@ impl MicrogridServer {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                let expired_ids = timeout_tracker.remove_expired(config.retain_requests_duration());
+                let expired_ids = timeout_tracker.remove_expired();
                 for id in expired_ids {
                     log::info!("Request timeout for component {}.", id);
                     config.set_power_active(id, 0.0).unwrap();
@@ -110,7 +114,17 @@ impl microgrid_server::Microgrid for MicrogridServer {
     ) -> std::result::Result<tonic::Response<SetComponentPowerActiveResponse>, tonic::Status> {
         let request = _request.into_inner();
         if self.bat_inverter_ids.contains(&request.component_id) {
-            self.timeout_tracker.add(request.component_id);
+            let duration = if let Some(dur) = request.request_lifetime {
+                if dur < 10 || dur > 60 * 15 {
+                    return Err(tonic::Status::invalid_argument(
+                        "Request lifetime must be between 10 seconds and 15 minutes.",
+                    ));
+                }
+                Some(Duration::from_secs(dur))
+            } else {
+                None
+            };
+            self.timeout_tracker.add(request.component_id, duration);
         }
         let res = self
             .config
