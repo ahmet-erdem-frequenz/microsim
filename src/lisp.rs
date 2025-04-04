@@ -3,15 +3,19 @@ use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr,
 
 use crate::proto::{
     common::v1::{
+        grid::{DeliveryArea, EnergyMarketCodeType},
         metrics::{
             metric_value_variant, Bounds, Metric, MetricSample, MetricValueVariant,
             SimpleMetricValue,
         },
-        microgrid::components::{
-            component_category_metadata_variant::Metadata, Battery, BatteryType, Component,
-            ComponentCategory, ComponentCategoryMetadataVariant, ComponentConnection,
-            ComponentData, ComponentState, ComponentStateCode, EvCharger, EvChargerType,
-            GridConnectionPoint, Inverter, InverterType,
+        microgrid::{
+            components::{
+                component_category_metadata_variant::Metadata, Battery, BatteryType, Component,
+                ComponentCategory, ComponentCategoryMetadataVariant, ComponentConnection,
+                ComponentData, ComponentState, ComponentStateCode, EvCharger, EvChargerType,
+                GridConnectionPoint, Inverter, InverterType,
+            },
+            MicrogridStatus,
         },
     },
     microgrid::v1::{
@@ -38,6 +42,7 @@ intern! {
         data: "data",
         type_: "type",
         power: "power",
+        status: "status",
         stream: "stream",
         voltage: "voltage",
         current: "current",
@@ -53,6 +58,8 @@ intern! {
         socket_addr: "socket-addr",
         ac_frequency: "ac-frequency",
         microgrid_id: "microgrid-id",
+        enterprise_id: "enterprise-id",
+        delivery_area: "delivery-area",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
@@ -61,6 +68,7 @@ intern! {
         component_state: "component-state",
         components_alist: "components-alist",
         set_power_active: "set-power-active",
+        create_timestamp: "create-timestamp",
         connections_alist: "connections-alist",
         rated_fuse_current: "rated-fuse-current",
         state_update_functions: "state-update-functions",
@@ -379,25 +387,74 @@ Invalid socket-addr.  Add a config line in this format:
             as_int
         )
         .unwrap_or_default() as u64;
-        let location = alist_get_as!(&mut self.ctx.borrow_mut(), &alist, &self.symbols.location)
-            .unwrap_or_default();
 
-        let latitude = location.car()?.as_float().map(|x| Some(x)).unwrap_or(None);
-        let longitude = location.cadr()?.as_float().map(|x| Some(x)).unwrap_or(None);
+        let enterprise_id = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.enterprise_id,
+            as_int
+        )
+        .unwrap_or_default() as u64;
+
+        let delivery_area = if let Ok(delivery_area) = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.delivery_area
+        ) {
+            Some(DeliveryArea {
+                code: delivery_area.car()?.as_string().unwrap_or_default(),
+                code_type: delivery_area
+                    .cadr()?
+                    .as_symbol()?
+                    .parse::<EnergyMarketCodeType>()
+                    .unwrap_or_default() as i32,
+            })
+        } else {
+            None
+        };
+
+        let location = if let Ok(location) =
+            alist_get_as!(&mut self.ctx.borrow_mut(), &alist, &self.symbols.location)
+        {
+            Some(crate::proto::common::v1::Location {
+                latitude: location.car()?.as_float().unwrap_or_default() as f32,
+                longitude: location.cadr()?.as_float().unwrap_or_default() as f32,
+                country_code: location.caddr()?.as_string().unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        let status = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.status,
+            as_symbol
+        )
+        .unwrap_or_default()
+        .parse::<MicrogridStatus>()
+        .unwrap_or_default() as i32;
+
+        let create_timestamp = if let Ok(iso_ts) = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.create_timestamp,
+            as_string
+        ) {
+            Some(Timestamp::from_str(iso_ts.as_str()).unwrap_or_default())
+        } else {
+            None
+        };
 
         Ok(GetMicrogridMetadataResponse {
             microgrid: Some(crate::proto::common::v1::microgrid::Microgrid {
                 id: microgrid_id,
-                enterprise_id: 0, // TODO: Add enterprise_id
+                enterprise_id,
                 name: format!("Microgrid {}", microgrid_id),
-                delivery_area: None, // TODO: Add delivery_area
-                location: Some(crate::proto::common::v1::Location {
-                    latitude: latitude.unwrap_or_default() as f32,
-                    longitude: longitude.unwrap_or_default() as f32,
-                    country_code: "".to_string(), // TODO: Add country_code
-                }),
-                status: 0,              // TODO: Add status
-                create_timestamp: None, // TODO: Add create_timestamp
+                delivery_area,
+                location,
+                status,
+                create_timestamp,
             }),
         })
     }

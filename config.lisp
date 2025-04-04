@@ -30,7 +30,11 @@
 
 ;; Microgrid config
 (setq metadata '((microgrid-id . 2200)
-                 (location . (52.52 13.405))))  ;; Berlin
+                 (enterprise-id . 1)
+                 (location . (52.52 13.405 "DE"))  ;; Berlin
+                 (delivery-area . ("10YDE-VE-------2" europe-eic))
+                 (status . active)
+                 (create-timestamp . "2023-12-31T00:00:00+01:00")))
 
 
 ;; Simulation config

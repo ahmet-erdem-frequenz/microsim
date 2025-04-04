@@ -1,4 +1,7 @@
-use common::v1::microgrid::components::ComponentStateCode;
+use common::v1::{
+    grid::EnergyMarketCodeType,
+    microgrid::{components::ComponentStateCode, MicrogridStatus},
+};
 
 use crate::proto::common::v1::microgrid::components::{
     BatteryType, ComponentCategory, EvChargerType, InverterType,
@@ -68,4 +71,6 @@ impl_enum_from_str!(
     (InverterType, "INVERTER_TYPE_"),
     (EvChargerType, "EV_CHARGER_TYPE_"),
     (ComponentStateCode, "COMPONENT_STATE_CODE_"),
+    (EnergyMarketCodeType, "ENERGY_MARKET_CODE_TYPE_"),
+    (MicrogridStatus, "MICROGRID_STATUS_"),
 );
