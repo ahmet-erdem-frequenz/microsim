@@ -29,7 +29,7 @@ pub struct MicrogridServer {
 impl MicrogridServer {
     pub fn new(config: Config) -> Self {
         let bat_inv_ids = config
-            .components()
+            .components(ListComponentsRequest::default())
             .unwrap()
             .components
             .iter()
@@ -90,7 +90,8 @@ impl microgrid_server::Microgrid for MicrogridServer {
         &self,
         _request: tonic::Request<ListComponentsRequest>,
     ) -> std::result::Result<tonic::Response<ListComponentsResponse>, tonic::Status> {
-        let components = self.config.components().unwrap();
+        let request = _request.into_inner();
+        let components = self.config.components(request).unwrap();
         Ok(tonic::Response::new(components))
     }
     async fn list_connections(
