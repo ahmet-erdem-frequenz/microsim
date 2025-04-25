@@ -45,8 +45,7 @@ impl MicrogridServer {
             .map(|c| c.id)
             .collect();
 
-        let timeout_tracker =
-            crate::timeout_tracker::TimeoutTracker::new(config.retain_requests_duration());
+        let timeout_tracker = crate::timeout_tracker::TimeoutTracker::new();
 
         let new = Self {
             config,
@@ -120,9 +119,9 @@ impl microgrid_server::Microgrid for MicrogridServer {
                         "Request lifetime must be between 10 seconds and 15 minutes.",
                     ));
                 }
-                Some(Duration::from_secs(dur))
+                Duration::from_secs(dur)
             } else {
-                None
+                self.config.retain_requests_duration()
             };
             self.timeout_tracker.add(request.component_id, duration);
         }

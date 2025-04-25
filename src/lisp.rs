@@ -1,5 +1,12 @@
 use rand::Rng;
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    path::Path,
+    rc::Rc,
+    str::FromStr,
+    time::Duration,
+};
 
 use crate::proto::{
     common::v1::{
@@ -88,6 +95,8 @@ pub struct Config {
 
     /// Component ID -> last power update time.
     last_formula_update_time: Rc<RefCell<std::time::Instant>>,
+
+    default_request_duration: Cell<Option<Duration>>,
 
     symbols: Symbols,
 }
@@ -235,6 +244,7 @@ impl Config {
             ctx: Rc::new(RefCell::new(ctx)),
             stream_methods: Rc::new(RefCell::new(HashMap::new())),
             last_formula_update_time: Rc::new(RefCell::new(now)),
+            default_request_duration: Cell::new(None),
             symbols,
         }
     }
@@ -363,6 +373,9 @@ Invalid socket-addr.  Add a config line in this format:
     }
 
     pub fn retain_requests_duration(&self) -> Duration {
+        if let Some(dur) = self.default_request_duration.get() {
+            return dur;
+        }
         let dur_ms = self
             .symbols
             .retain_requests_duration_ms
@@ -370,7 +383,9 @@ Invalid socket-addr.  Add a config line in this format:
             .and_then(|x| x.as_int())
             .unwrap_or(5000);
 
-        Duration::from_millis(dur_ms as u64)
+        let dur = Duration::from_millis(dur_ms as u64);
+        self.default_request_duration.set(Some(dur));
+        dur
     }
 
     pub fn metadata(&self) -> Result<GetMicrogridMetadataResponse, Error> {

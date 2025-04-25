@@ -9,8 +9,7 @@ use std::time::Instant;
 
 #[derive(Clone, Default)]
 pub(crate) struct TimeoutTracker {
-    default_timeout: Duration,
-    data: Rc<RefCell<HashMap<u64, (Instant, Option<Duration>)>>>,
+    data: Rc<RefCell<HashMap<u64, (Instant, Duration)>>>,
 }
 
 // Tokio is configured to use the current_thread runtime, so it is not unsafe to
@@ -19,14 +18,13 @@ unsafe impl Send for TimeoutTracker {}
 unsafe impl Sync for TimeoutTracker {}
 
 impl TimeoutTracker {
-    pub(crate) fn new(default_timeout: Duration) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            default_timeout,
             data: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
-    pub(crate) fn add(&self, id: u64, timeout: Option<Duration>) {
+    pub(crate) fn add(&self, id: u64, timeout: Duration) {
         let now = Instant::now();
         self.data.borrow_mut().insert(id, (now, timeout));
     }
@@ -36,7 +34,7 @@ impl TimeoutTracker {
         let mut expired_ids = HashSet::new();
 
         self.data.borrow_mut().retain(|&id, (instant, duration)| {
-            if *instant <= now - duration.unwrap_or(self.default_timeout) {
+            if *instant <= now - *duration {
                 expired_ids.insert(id);
                 false
             } else {
