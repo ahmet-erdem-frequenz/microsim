@@ -111,7 +111,7 @@ impl microgrid_server::Microgrid for MicrogridServer {
             return Err(tonic::Status::failed_precondition(err.desc()));
         }
         Ok(tonic::Response::new(SetComponentPowerActiveResponse {
-            valid_until: None, // TODO: implement valid_until
+            valid_until: Some(SystemTime::now().checked_add(duration).unwrap().into()),
         }))
     }
 
