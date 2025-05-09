@@ -162,6 +162,7 @@
                         (inclusion-upper . ,rated-upper)))
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
           `((category . inverter)
@@ -191,6 +192,11 @@
              (eval (list 'lambda '(power)
                          (log.error "inverter is unhealthy")
                          nil))))
+
+    (set reset-power-func-symbol
+         `(lambda ()
+            (dolist (battery (quote ,successors))
+              (set (power-symbol-from-id (alist-get 'id battery)) 0.0))))
 
     (set set-power-func-symbol
          (let* ((healthy-batteries (seq-filter
@@ -253,6 +259,7 @@
 
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
           `((category . inverter)
@@ -284,6 +291,11 @@
              (list 'lambda '(power)
                    (log.error "inverter is unhealthy")
                    nil)))
+
+    (set reset-power-func-symbol
+         `(lambda ()
+            (setq ,min-power-symbol ,rated-lower)
+            (setq ,power-symbol (max ,rated-lower ,(* rated-lower (/ sunlight% 100))))))
 
     (set set-power-func-symbol
          (if is-healthy
@@ -430,6 +442,7 @@
                         (inclusion-upper . ,rated-upper)))
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (ev-charger
           `((category . ev-charger)
@@ -479,6 +492,10 @@
              (list 'lambda '(power)
                    (log.error "ev-charger is unhealthy")
                    nil)))
+
+    (set reset-power-func-symbol
+         `(lambda ()
+            (setq ,power-symbol 0.0)))
 
     (set set-power-func-symbol
          (if is-healthy

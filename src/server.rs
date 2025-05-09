@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
@@ -7,8 +6,6 @@ use tokio_stream::Stream;
 
 use crate::lisp::Config;
 
-use crate::proto::common::v1::microgrid::components::component_category_metadata_variant::Metadata;
-use crate::proto::common::v1::microgrid::components::{ComponentCategory, InverterType};
 use crate::proto::microgrid::v1::{
     microgrid_server, AckComponentErrorRequest, AddComponentBoundsRequest,
     AddComponentBoundsResponse, GetMicrogridMetadataResponse, ListComponentsRequest,
@@ -23,34 +20,15 @@ use crate::proto::microgrid::v1::{
 pub struct MicrogridServer {
     pub config: Config,
     pub timeout_tracker: crate::timeout_tracker::TimeoutTracker,
-    pub bat_inverter_ids: HashSet<u64>,
 }
 
 impl MicrogridServer {
     pub fn new(config: Config) -> Self {
-        let bat_inverter_ids = config
-            .components(ListComponentsRequest::default())
-            .unwrap()
-            .components
-            .iter()
-            .filter(|c| {
-                c.category == ComponentCategory::Inverter as i32
-                    && match c.category_type.as_ref().unwrap().metadata.as_ref().unwrap() {
-                        Metadata::Inverter(inverter) => {
-                            inverter.r#type == InverterType::Battery as i32
-                        }
-                        _ => false,
-                    }
-            })
-            .map(|c| c.id)
-            .collect();
-
         let timeout_tracker = crate::timeout_tracker::TimeoutTracker::new();
 
         let new = Self {
             config,
             timeout_tracker,
-            bat_inverter_ids,
         };
 
         new.start_timeout_tracker();
@@ -66,7 +44,7 @@ impl MicrogridServer {
                 let expired_ids = timeout_tracker.remove_expired();
                 for id in expired_ids {
                     log::info!("Request timeout for component {}.", id);
-                    config.set_power_active(id, 0.0).unwrap();
+                    config.reset_power_active(id).unwrap();
                 }
             }
         });
@@ -112,19 +90,18 @@ impl microgrid_server::Microgrid for MicrogridServer {
         _request: tonic::Request<SetComponentPowerActiveRequest>,
     ) -> std::result::Result<tonic::Response<SetComponentPowerActiveResponse>, tonic::Status> {
         let request = _request.into_inner();
-        if self.bat_inverter_ids.contains(&request.component_id) {
-            let duration = if let Some(dur) = request.request_lifetime {
-                if dur < 10 || dur > 60 * 15 {
-                    return Err(tonic::Status::invalid_argument(
-                        "Request lifetime must be between 10 seconds and 15 minutes.",
-                    ));
-                }
-                Duration::from_secs(dur)
-            } else {
-                self.config.retain_requests_duration()
-            };
-            self.timeout_tracker.add(request.component_id, duration);
-        }
+        let duration = if let Some(dur) = request.request_lifetime {
+            if dur < 10 || dur > 60 * 15 {
+                return Err(tonic::Status::invalid_argument(
+                    "Request lifetime must be between 10 seconds and 15 minutes.",
+                ));
+            }
+            Duration::from_secs(dur)
+        } else {
+            self.config.retain_requests_duration()
+        };
+        self.timeout_tracker.add(request.component_id, duration);
+
         let res = self
             .config
             .set_power_active(request.component_id, request.power);

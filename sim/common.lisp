@@ -39,6 +39,9 @@
 (defun set-power-func-symbol-from-id (id)
   (intern (format "component-set-power-func-%s" id)))
 
+(defun reset-power-func-symbol-from-id (id)
+  (intern (format "component-reset-power-func-%s" id)))
+
 
 (defun add-to-connections-alist (id-from id-to)
   (setq connections-alist (cons (cons id-from id-to)
@@ -133,6 +136,12 @@
         (let ((err (format "Requested power %f is out of bounds for component id %d" power id)))
           (log.warn err)
           err))))
+
+(defun reset-power-active (id)
+  (let* ((reset-power-func (eval (reset-power-func-symbol-from-id id))))
+    (if reset-power-func
+        (funcall reset-power-func)
+      (log.warn "No reset power function found for component id %d" id))))
 
 
 (defun component-data-maker (data-alist defaults-alist keys)

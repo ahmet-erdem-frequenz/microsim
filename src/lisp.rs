@@ -78,6 +78,7 @@ intern! {
         create_timestamp: "create-timestamp",
         connections_alist: "connections-alist",
         rated_fuse_current: "rated-fuse-current",
+        reset_power_active: "reset-power-active",
         state_update_functions: "state-update-functions",
         state_update_interval_ms: "state-update-interval-ms",
         retain_requests_duration_ms: "retain-requests-duration-ms",
@@ -528,6 +529,19 @@ Invalid socket-addr.  Add a config line in this format:
             return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
         }
         Ok(())
+    }
+
+    pub fn reset_power_active(&self, component_id: u64) -> Result<(), Error> {
+        fn work(config: &Config, component_id: u64) -> Result<(), Error> {
+            config.ctx.borrow_mut().funcall(
+                &config.symbols.reset_power_active,
+                &list![(component_id as i64).into()]?,
+            )?;
+
+            Ok(())
+        }
+        work(self, component_id)
+            .inspect_err(|e| log::error!("Tulisp error:\n{}", e.format(&self.ctx.borrow())))
     }
 
     fn get_conv_function(&self, component_id: u64, comp: &TulispObject) -> CompDataMaker {
