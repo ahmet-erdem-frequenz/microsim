@@ -263,7 +263,7 @@
 
          (inverter
           `((category . inverter)
-            (type     . solar)
+            (type     . pv)
             (name     . ,(format "inv-pv-%s" id))
             (id       . ,id)
             ,@power-expr
@@ -542,9 +542,9 @@
         (successors (plist-get plist :successors))
         (rated-fuse-current (plist-get plist :rated-fuse-current))
         (grid
-         `((category . grid)
+         `((category . grid-connection-point)
            (id       . ,id)
-           (name     . "grid")
+           (name     . "grid-connection-point")
            (rated-fuse-current . ,rated-fuse-current))))
 
     (log.trace (format "Adding grid connection %s" id))

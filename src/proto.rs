@@ -1,49 +1,52 @@
-use common::v1::{
+use common::v1alpha8::{
     grid::EnergyMarketCodeType,
-    microgrid::{components::ComponentStateCode, MicrogridStatus},
+    microgrid::{electrical_components::ElectricalComponentStateCode, MicrogridStatus},
 };
 
-use crate::proto::common::v1::microgrid::components::{
-    BatteryType, ComponentCategory, EvChargerType, InverterType,
+use crate::proto::common::v1alpha8::microgrid::electrical_components::{
+    BatteryType, ElectricalComponentCategory, EvChargerType, InverterType,
 };
 
+#[allow(clippy::doc_lazy_continuation)]
 pub mod common {
-    pub mod v1 {
-        #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-        tonic::include_proto!("frequenz.api.common.v1");
-
+    pub mod v1alpha8 {
         pub mod grid {
-            #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-            tonic::include_proto!("frequenz.api.common.v1.grid");
-        }
-
-        pub mod metrics {
-            #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-            tonic::include_proto!("frequenz.api.common.v1.metrics");
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.grid");
         }
 
         pub mod microgrid {
-            #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-            tonic::include_proto!("frequenz.api.common.v1.microgrid");
-
-            pub mod components {
-                #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-                tonic::include_proto!("frequenz.api.common.v1.microgrid.components");
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.microgrid");
+            pub mod electrical_components {
+                #![allow(clippy::derive_partial_eq_without_eq)]
+                tonic::include_proto!(
+                    "frequenz.api.common.v1alpha8.microgrid.electrical_components"
+                );
             }
-
             pub mod sensors {
-                #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-                tonic::include_proto!("frequenz.api.common.v1.microgrid.sensors");
+                #![allow(clippy::derive_partial_eq_without_eq)]
+                tonic::include_proto!("frequenz.api.common.v1alpha8.microgrid.sensors");
             }
+        }
+
+        pub mod metrics {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.metrics");
+        }
+
+        pub mod types {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.types");
         }
     }
 }
 
+#[allow(clippy::doc_lazy_continuation)]
 pub mod microgrid {
-
-    pub mod v1 {
-        #![allow(clippy::derive_partial_eq_without_eq, clippy::doc_lazy_continuation)]
-        tonic::include_proto!("frequenz.api.microgrid.v1");
+    pub mod v1alpha18 {
+        #![allow(clippy::derive_partial_eq_without_eq)]
+        tonic::include_proto!("frequenz.api.microgrid.v1alpha18");
     }
 }
 
@@ -66,11 +69,17 @@ macro_rules! impl_enum_from_str {
 }
 
 impl_enum_from_str!(
-    (ComponentCategory, "COMPONENT_CATEGORY_"),
+    (
+        ElectricalComponentCategory,
+        "ELECTRICAL_COMPONENT_CATEGORY_"
+    ),
     (BatteryType, "BATTERY_TYPE_"),
     (InverterType, "INVERTER_TYPE_"),
     (EvChargerType, "EV_CHARGER_TYPE_"),
-    (ComponentStateCode, "COMPONENT_STATE_CODE_"),
+    (
+        ElectricalComponentStateCode,
+        "ELECTRICAL_COMPONENT_STATE_CODE_"
+    ),
     (EnergyMarketCodeType, "ENERGY_MARKET_CODE_TYPE_"),
     (MicrogridStatus, "MICROGRID_STATUS_"),
 );

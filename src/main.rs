@@ -3,7 +3,7 @@ mod proto;
 mod server;
 mod timeout_tracker;
 
-use proto::microgrid::v1::microgrid_server;
+use proto::microgrid::v1alpha18::microgrid_server;
 use tonic::transport::Server;
 
 #[tokio::main(flavor = "current_thread")]
