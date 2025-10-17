@@ -52,11 +52,6 @@
                      (+ 229.0 (/ (random 200) 100.0))
                      (+ 229.0 (/ (random 200) 100.0))))
 
-         (setq power-factor-per-phase
-               (list (+ 0.88 (/ (random 5) 100.0))
-                     (+ 0.88 (/ (random 5) 100.0))
-                     (+ 0.88 (/ (random 5) 100.0))))
-
          (setq ac-frequency
                (+ 49.99 (/ (random 4) 100.0)))))
 

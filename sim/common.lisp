@@ -167,9 +167,9 @@
             (vp1 (car voltage-per-phase))
             (vp2 (cadr voltage-per-phase))
             (vp3 (caddr voltage-per-phase)))
-        (list (/ (* power (/ vp1 sum-voltage)) (* vp1 (car power-factor-per-phase)))
-              (/ (* power (/ vp2 sum-voltage)) (* vp2 (cadr power-factor-per-phase)))
-              (/ (* power (/ vp3 sum-voltage)) (* vp3 (caddr power-factor-per-phase)))))
+        (list (/ (* power (/ vp1 sum-voltage)) vp1)
+              (/ (* power (/ vp2 sum-voltage)) vp2)
+              (/ (* power (/ vp3 sum-voltage)) vp3)))
     '(0.0 0.0 0.0)))
 
 
