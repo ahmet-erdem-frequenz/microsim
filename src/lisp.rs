@@ -145,16 +145,13 @@ macro_rules! alist_get_3_phase {
         };
         (
             items
-                .car()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .car_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .cadr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .cadr_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .caddr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .caddr_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
                 .unwrap_or_default() as f32,
         )
     }};
