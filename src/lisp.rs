@@ -70,6 +70,7 @@ intern! {
         microgrid_id: "microgrid-id",
         enterprise_id: "enterprise-id",
         delivery_area: "delivery-area",
+        reactive_power: "reactive-power",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
@@ -83,6 +84,7 @@ intern! {
         rated_fuse_current: "rated-fuse-current",
         reset_power_active: "reset-power-active",
         state_update_functions: "state-update-functions",
+        per_phase_reactive_power: "per-phase-reactive-power",
         state_update_interval_ms: "state-update-interval-ms",
         retain_requests_duration_ms: "retain-requests-duration-ms",
     }
@@ -786,8 +788,10 @@ impl Config {
         let current = alist_get_3_phase!(ctx, &alist, &symbols.current);
         let voltage = alist_get_3_phase!(ctx, &alist, &symbols.voltage);
         let per_phase_power = alist_get_3_phase!(ctx, &alist, &symbols.per_phase_power);
-
         let power = alist_get_f32!(ctx, &alist, &symbols.power);
+        let per_phase_reactive_power =
+            alist_get_3_phase!(ctx, &alist, &symbols.per_phase_reactive_power);
+        let reactive_power = alist_get_f32!(ctx, &alist, &symbols.reactive_power);
 
         let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
         let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
@@ -881,6 +885,42 @@ impl Config {
             },
             MetricSample {
                 sample_time: now,
+                metric: Metric::AcPowerReactivePhase1 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.0,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase2 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.1,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase3 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
                 metric: Metric::AcPowerActivePhase1 as i32,
                 value: Some(MetricValueVariant {
                     metric_value_variant: Some(
@@ -910,6 +950,18 @@ impl Config {
                     metric_value_variant: Some(
                         metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
                             value: per_phase_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactive as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: reactive_power,
                         }),
                     ),
                 }),

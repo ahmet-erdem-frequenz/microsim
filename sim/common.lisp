@@ -72,12 +72,14 @@
           (setq expr (cons power expr))))
     (when expr (cons '+ expr))))
 
-(defun make-per-phase-power-expr (successors)
+
+(defun make-per-phase-power-expr (successors &optional alist-key)
   (let ((p1-expr ())
         (p2-expr ())
-        (p3-expr ()))
+        (p3-expr ())
+        (alist-key (or alist-key 'per-phase-power)))
     (dolist (successor successors)
-      (when-let ((per-phase-power (alist-get 'per-phase-power successor)))
+      (when-let ((per-phase-power (alist-get alist-key successor)))
         (setq p1-expr (cons `(car ,per-phase-power) p1-expr))
         (setq p2-expr (cons `(cadr ,per-phase-power) p2-expr))
         (setq p3-expr (cons `(caddr ,per-phase-power) p3-expr))))
@@ -86,6 +88,10 @@
       (setq p2-expr (cons '+ p2-expr))
       (setq p3-expr (cons '+ p3-expr))
       (list 'list p1-expr p2-expr p3-expr))))
+
+
+(defun make-per-phase-reactive-power-expr (successors)
+  (make-per-phase-power-expr successors 'per-phase-reactive-power))
 
 
 (defun make-current-expr (successors)

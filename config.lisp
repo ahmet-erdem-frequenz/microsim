@@ -49,6 +49,11 @@
                      (+ 16000.0 (random 50))
                      (+ 16000.0 (random 50))))
 
+         (setq consumer-per-phase-reactive-power
+               (list (+ 1600.0 (random 20))
+                     (+ 1600.0 (random 20))
+                     (+ 1600.0 (random 20))))
+
          (setq voltage-per-phase
                (list (+ 229.0 (/ (random 200) 100.0))
                      (+ 229.0 (/ (random 200) 100.0))
@@ -144,5 +149,6 @@
                             (make-meter
                              :hidden t
                              :per-phase-power 'consumer-per-phase-power
+                             :per-phase-reactive-power 'consumer-per-phase-reactive-power
                              )))))
 

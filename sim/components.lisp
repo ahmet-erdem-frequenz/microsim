@@ -328,7 +328,9 @@
 (defmacro meter-data-maker (data-alist defaults-alist)
   (component-data-maker data-alist
                         defaults-alist
-                        '(id power per-phase-power current voltage component-state)))
+                        '(id power per-phase-power reactive-power
+                          per-phase-reactive-power current voltage
+                          component-state)))
 
 
 
@@ -337,6 +339,8 @@
          (interval (or (plist-get plist :interval) meter-interval))
          (power (plist-get plist :power))
          (per-phase-power (plist-get plist :per-phase-power))
+         (reactive-power (plist-get plist :reactive-power))
+         (per-phase-reactive-power (plist-get plist :per-phase-reactive-power))
 
          (config (plist-get plist :config))
          (config-alist `(,@config ,@meter-defaults))
@@ -344,26 +348,39 @@
          (successors (plist-get plist :successors))
          (hidden (plist-get plist :hidden))
          (is-healthy (is-healthy-meter config-alist))
-         (power-expr (when is-healthy
-                       (cond
-                         ((and power per-phase-power)
-                          (error (format "Can't use meter %s with both :power and :per-phase-power set" id)))
-                         (per-phase-power
-                          `((power . (seq-reduce '+ ,per-phase-power 0.0))
-                            (per-phase-power . ,per-phase-power)
-                            (voltage . voltage-per-phase)))
-                         (power
-                          `((power . ,power)
-                            (per-phase-power . (calc-per-phase-power ,power))
-                            (voltage . voltage-per-phase)))
-                         (:else (if-let ((per-phase-power (make-per-phase-power-expr successors)))
-                                    `((power . (seq-reduce '+ ,per-phase-power 0.0))
-                                      (per-phase-power . ,per-phase-power)
-                                      (voltage . voltage-per-phase)))))
-                       ))
+         (power-expr
+          (when is-healthy
+            (cond
+              ((and power per-phase-power)
+               (error (format "Can't use meter %s with both :power and :per-phase-power set" id)))
+              (per-phase-power
+               `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                 (per-phase-power . ,per-phase-power)))
+              (power
+               `((power . ,power)
+                 (per-phase-power . (calc-per-phase-power ,power))))
+              (:else (if-let ((per-phase-power (make-per-phase-power-expr successors)))
+                         `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                           (per-phase-power . ,per-phase-power)))))
+            ))
          (current-expr (when power-expr
                          `((current . (ac-current-from-per-phase-power
-                                       ,(alist-get 'per-phase-power power-expr))))))
+                                       ,(alist-get 'per-phase-power power-expr)))
+                           (voltage . voltage-per-phase))))
+         (reactive-power-expr
+          (when is-healthy
+            (cond
+              ((and reactive-power per-phase-reactive-power)
+               (error (format "Can't use meter %s with both :reactive-power and :per-phase-reactive-power set" id)))
+              (per-phase-reactive-power
+               `((reactive-power . (seq-reduce '+ ,per-phase-reactive-power 0.0))
+                 (per-phase-reactive-power . ,per-phase-reactive-power)))
+              (reactive-power
+               `((reactive-power . ,reactive-power)
+                 (per-phase-reactive-power . (calc-per-phase-power ,reactive-power))))
+              (:else (if-let ((per-phase-reactive-power (make-per-phase-reactive-power-expr successors)))
+                         `((reactive-power . (seq-reduce '+ ,per-phase-reactive-power 0.0))
+                           (per-phase-reactive-power . ,per-phase-reactive-power)))))))
          (meter
           `((category . meter)
             (name     . ,(format "meter-%s" id))
@@ -371,13 +388,15 @@
             (hidden   . ,hidden)
             ,@current-expr
             ,@power-expr
+            ,@reactive-power-expr
             (stream   . ,(list
                           `(interval . ,interval)
                           (cons 'data
                                 (macroexpand '(meter-data-maker
                                                `((id    . ,id)
                                                  ,@current-expr
-                                                 ,@power-expr)
+                                                 ,@power-expr
+                                                 ,@reactive-power-expr)
                                                config-alist))))))))
 
     (log.trace (format "Adding meter %s" id))
