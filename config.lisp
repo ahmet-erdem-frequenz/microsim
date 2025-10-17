@@ -24,7 +24,7 @@
 (setq retain-requests-duration-ms 60000)
 (setq battery-interval 1000)
 (setq inverter-interval 1000)
-(setq meter-interval 200)
+(setq meter-interval 1000)
 (setq ev-charger-interval 1000)
 
 
@@ -108,6 +108,7 @@
               ;; main-meter
               (make-meter
                :id 2
+               :interval 200
                :successors (list
                             ;; battery 1
                             (make-meter
@@ -151,4 +152,3 @@
                              :per-phase-power 'consumer-per-phase-power
                              :per-phase-reactive-power 'consumer-per-phase-reactive-power
                              )))))
-
