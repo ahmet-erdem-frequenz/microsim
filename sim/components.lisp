@@ -154,7 +154,7 @@
                        `((power . ,(make-power-expr successors))
                          (per-phase-power . (calc-per-phase-power ,(make-power-expr successors)))
                          (voltage . voltage-per-phase)
-                         (current . (calc-per-phase-current
+                         (current . (ac-current-from-power
                                      ,(make-power-expr successors)))
                          (component-state . (power->component-state
                                              ,(make-power-expr successors))))))
@@ -252,7 +252,7 @@
                        `((power . ,power-symbol)
                          (per-phase-power . (calc-per-phase-power ,power-symbol))
                          (voltage . voltage-per-phase)
-                         (current . (calc-per-phase-current
+                         (current . (ac-current-from-power
                                      ,power-symbol))
                          (component-state . (power->component-state
                                              ,power-symbol)))))
@@ -336,6 +336,7 @@
   (let* ((id (or (plist-get plist :id) (get-comp-id)))
          (interval (or (plist-get plist :interval) meter-interval))
          (power (plist-get plist :power))
+         (per-phase-power (plist-get plist :per-phase-power))
 
          (config (plist-get plist :config))
          (config-alist `(,@config ,@meter-defaults))
@@ -343,18 +344,26 @@
          (successors (plist-get plist :successors))
          (hidden (plist-get plist :hidden))
          (is-healthy (is-healthy-meter config-alist))
-         (current-expr (when is-healthy
-                         (if-let ((current (if power
-                                               `(calc-per-phase-current ,power)
-                                               (make-current-expr successors)
-                                               )))
-                             `((current . ,current)))))
          (power-expr (when is-healthy
-                       (if-let ((power (or power
-                                           (make-power-expr successors))))
-                           `((power . ,power)
-                             (per-phase-power . (calc-per-phase-power ,power))
-                             (voltage . voltage-per-phase)))))
+                       (cond
+                         ((and power per-phase-power)
+                          (error (format "Can't use meter %s with both :power and :per-phase-power set" id)))
+                         (per-phase-power
+                          `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                            (per-phase-power . ,per-phase-power)
+                            (voltage . voltage-per-phase)))
+                         (power
+                          `((power . ,power)
+                            (per-phase-power . (calc-per-phase-power ,power))
+                            (voltage . voltage-per-phase)))
+                         (:else (if-let ((per-phase-power (make-per-phase-power-expr successors)))
+                                    `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                                      (per-phase-power . ,per-phase-power)
+                                      (voltage . voltage-per-phase)))))
+                       ))
+         (current-expr (when power-expr
+                         `((current . (ac-current-from-per-phase-power
+                                       ,(alist-get 'per-phase-power power-expr))))))
          (meter
           `((category . meter)
             (name     . ,(format "meter-%s" id))

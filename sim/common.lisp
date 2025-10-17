@@ -72,6 +72,21 @@
           (setq expr (cons power expr))))
     (when expr (cons '+ expr))))
 
+(defun make-per-phase-power-expr (successors)
+  (let ((p1-expr ())
+        (p2-expr ())
+        (p3-expr ()))
+    (dolist (successor successors)
+      (when-let ((per-phase-power (alist-get 'per-phase-power successor)))
+        (setq p1-expr (cons `(car ,per-phase-power) p1-expr))
+        (setq p2-expr (cons `(cadr ,per-phase-power) p2-expr))
+        (setq p3-expr (cons `(caddr ,per-phase-power) p3-expr))))
+    (when p1-expr
+      (setq p1-expr (cons '+ p1-expr))
+      (setq p2-expr (cons '+ p2-expr))
+      (setq p3-expr (cons '+ p3-expr))
+      (list 'list p1-expr p2-expr p3-expr))))
+
 
 (defun make-current-expr (successors)
   (let ((p1-expr ())
@@ -158,21 +173,6 @@
     (eval (list 'lambda '(_) `(quote ,args-alist)))))
 
 
-(defun calc-per-phase-current (power)
-  ;; pf = w / (v * a)
-  ;; a = w / (v * pf)
-  ;; a = (* w (/ voltage total-voltage)) / (v * pf)
-  (if (numberp power)
-      (let ((sum-voltage (seq-reduce '+ voltage-per-phase 0.0))
-            (vp1 (car voltage-per-phase))
-            (vp2 (cadr voltage-per-phase))
-            (vp3 (caddr voltage-per-phase)))
-        (list (/ (* power (/ vp1 sum-voltage)) vp1)
-              (/ (* power (/ vp2 sum-voltage)) vp2)
-              (/ (* power (/ vp3 sum-voltage)) vp3)))
-    '(0.0 0.0 0.0)))
-
-
 (defun ac-current-from-power (power)
   (if (numberp power)
       (let ((sum-voltage (seq-reduce '+ voltage-per-phase 0.0))
@@ -183,6 +183,14 @@
               (/ (* power (/ vp2 sum-voltage)) vp2)
               (/ (* power (/ vp3 sum-voltage)) vp3)))
     '(0.0 0.0 0.0)))
+
+
+(defun ac-current-from-per-phase-power (per-phase-power)
+  (if (consp per-phase-power)
+        (list (/ (car per-phase-power) (car voltage-per-phase))
+              (/ (cadr per-phase-power) (cadr voltage-per-phase))
+              (/ (caddr per-phase-power) (caddr voltage-per-phase)))
+      '(0.0 0.0 0.0)))
 
 
 (defun calc-per-phase-power (power)

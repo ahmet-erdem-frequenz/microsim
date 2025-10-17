@@ -7,7 +7,7 @@ use crate::proto::common::v1alpha8::microgrid::electrical_components::{
     BatteryType, ElectricalComponentCategory, EvChargerType, InverterType,
 };
 
-#[allow(clippy::doc_lazy_continuation)]
+#[allow(clippy::doc_lazy_continuation, dead_code)]
 pub mod common {
     pub mod v1alpha8 {
         pub mod grid {

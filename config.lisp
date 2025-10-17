@@ -44,8 +44,10 @@
 (every
  :milliseconds 200
  :call (lambda ()
-         (setq consumer-power
-               (+ 48000 (random 100)))
+         (setq consumer-per-phase-power
+               (list (+ 16000.0 (random 50))
+                     (+ 16000.0 (random 50))
+                     (+ 16000.0 (random 50))))
 
          (setq voltage-per-phase
                (list (+ 229.0 (/ (random 200) 100.0))
@@ -141,5 +143,6 @@
                             ;; consumer
                             (make-meter
                              :hidden t
-                             :power 'consumer-power)))))
+                             :per-phase-power 'consumer-per-phase-power
+                             )))))
 
