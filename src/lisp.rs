@@ -12,19 +12,18 @@ use crate::proto::{
     common::v1alpha8::{
         grid::{DeliveryArea, EnergyMarketCodeType},
         metrics::{
-            metric_value_variant, Bounds, Metric, MetricSample, MetricValueVariant,
-            SimpleMetricValue,
+            Bounds, Metric, MetricSample, MetricValueVariant, SimpleMetricValue,
+            metric_value_variant,
         },
         microgrid::{
+            MicrogridStatus,
             electrical_components::{
-                electrical_component_category_specific_info::Kind, Battery, BatteryType,
-                ElectricalComponent, ElectricalComponentCategory,
+                Battery, BatteryType, ElectricalComponent, ElectricalComponentCategory,
                 ElectricalComponentCategorySpecificInfo, ElectricalComponentConnection,
                 ElectricalComponentStateCode, ElectricalComponentStateSnapshot,
                 ElectricalComponentTelemetry, EvCharger, EvChargerType, GridConnectionPoint,
-                Inverter, InverterType,
+                Inverter, InverterType, electrical_component_category_specific_info::Kind,
             },
-            MicrogridStatus,
         },
     },
     microgrid::v1alpha18::{
@@ -35,7 +34,7 @@ use crate::proto::{
 };
 use notify::{RecommendedWatcher, Watcher};
 use prost_types::Timestamp;
-use tulisp::{destruct_bind, intern, list, Error, ErrorKind, TulispContext, TulispObject};
+use tulisp::{Error, ErrorKind, TulispContext, TulispObject, destruct_bind, intern, list};
 
 type CompDataMaker = fn(
     &mut TulispContext,
@@ -113,16 +112,12 @@ unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
 macro_rules! alist_get_as {
-    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{
-        alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn())
-    }};
+    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{ alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn()) }};
     ($ctx: expr, $rest:expr, $key:expr, eval++$as_fn:ident) => {{
         let out = alist_get_as!($ctx, $rest, $key);
         out.and_then(|x| $ctx.eval_and_then(&x, |_, x| x.$as_fn()))
     }};
-    ($ctx: expr, $rest:expr, $key:expr) => {{
-        tulisp::lists::alist_get($ctx, $key, $rest, None, None, None)
-    }};
+    ($ctx: expr, $rest:expr, $key:expr) => {{ tulisp::lists::alist_get($ctx, $key, $rest, None, None, None) }};
 }
 
 macro_rules! alist_get_f32 {
@@ -1045,13 +1040,15 @@ impl Config {
                 metric_samples: Self::ac_from_alist(ctx, now, alist, symbols)?,
                 state_snapshots: vec![ElectricalComponentStateSnapshot {
                     origin_time: now,
-                    states: vec![enum_from_alist::<ElectricalComponentStateCode>(
-                        ctx,
-                        &alist,
-                        &symbols.component_state,
-                        true,
-                    )
-                    .unwrap_or_default() as i32],
+                    states: vec![
+                        enum_from_alist::<ElectricalComponentStateCode>(
+                            ctx,
+                            &alist,
+                            &symbols.component_state,
+                            true,
+                        )
+                        .unwrap_or_default() as i32,
+                    ],
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1119,7 +1116,7 @@ fn add_functions(ctx: &mut TulispContext) {
     ctx.add_special_form("random", |ctx, args| {
         destruct_bind!((&optional limit) = args);
         let rnd = if limit.null() {
-            rand::thread_rng().gen()
+            rand::thread_rng().r#gen()
         } else {
             let limit = ctx.eval(&limit)?.try_into()?;
             rand::thread_rng().gen_range(0..limit)
