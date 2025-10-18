@@ -45,12 +45,14 @@ type CompDataMaker = fn(
 intern! {
     #[derive(Clone)]
     pub(crate) struct Symbols {
+        state_update_interval_ms: "state-update-interval-ms",
+        reactive_power: "reactive-power",
+        power: "power",
+        name: "name",
         id: "id",
         soc: "soc",
-        name: "name",
         data: "data",
         type_: "type",
-        power: "power",
         status: "status",
         stream: "stream",
         voltage: "voltage",
@@ -69,7 +71,6 @@ intern! {
         microgrid_id: "microgrid-id",
         enterprise_id: "enterprise-id",
         delivery_area: "delivery-area",
-        reactive_power: "reactive-power",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
@@ -84,7 +85,6 @@ intern! {
         reset_power_active: "reset-power-active",
         state_update_functions: "state-update-functions",
         per_phase_reactive_power: "per-phase-reactive-power",
-        state_update_interval_ms: "state-update-interval-ms",
         retain_requests_duration_ms: "retain-requests-duration-ms",
     }
 }
