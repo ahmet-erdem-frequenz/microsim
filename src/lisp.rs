@@ -116,7 +116,7 @@ macro_rules! alist_get_as {
     }};
     ($ctx: expr, $rest:expr, $key:expr, eval++$as_fn:ident) => {{
         let out = alist_get_as!($ctx, $rest, $key);
-        out.and_then(|x| $ctx.eval_and_then(&x, |x| x.$as_fn()))
+        out.and_then(|x| $ctx.eval_and_then(&x, |_, x| x.$as_fn()))
     }};
     ($ctx: expr, $rest:expr, $key:expr) => {{
         tulisp::lists::alist_get($ctx, $key, $rest, None, None, None)
@@ -145,13 +145,13 @@ macro_rules! alist_get_3_phase {
         };
         (
             items
-                .car_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .car_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .cadr_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .cadr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .caddr_and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .caddr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
         )
     }};
