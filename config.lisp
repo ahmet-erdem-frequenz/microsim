@@ -21,11 +21,12 @@
 
 ;; API service config
 (setq socket-addr "[::1]:8800")  ;; Needs restart to take effect.
-(setq retain-requests-duration-ms 60000)
 (setq battery-interval 1000)
 (setq inverter-interval 1000)
 (setq meter-interval 1000)
 (setq ev-charger-interval 1000)
+(setq retain-requests-duration-ms 60000) ;; can be overriden by
+                                         ;; individual requests
 
 
 ;; Microgrid config
