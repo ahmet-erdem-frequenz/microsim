@@ -68,15 +68,16 @@ intern! {
         cable_state: "cable-state",
         socket_addr: "socket-addr",
         ac_frequency: "ac-frequency",
-        microgrid_id: "microgrid-id",
+        component_state: "component-state",
+        set_power_reactive: "set-power-reactive",
         enterprise_id: "enterprise-id",
+        microgrid_id: "microgrid-id",
         delivery_area: "delivery-area",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
         exclusion_upper: "exclusion-upper",
         per_phase_power: "per-phase-power",
-        component_state: "component-state",
         components_alist: "components-alist",
         set_power_active: "set-power-active",
         create_timestamp: "create-timestamp",
@@ -541,7 +542,20 @@ Invalid socket-addr.  Add a config line in this format:
         Ok(())
     }
 
+    pub fn set_power_reactive(&self, component_id: u64, power: f32) -> Result<(), Error> {
+        let res = self.ctx.borrow_mut().funcall(
+            &self.symbols.set_power_reactive,
+            &list![(component_id as i64).into(), (power as f64).into()]?,
+        )?;
+
+        if !res.null() {
+            return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
+        }
+        Ok(())
+    }
+
     pub fn reset_power_active(&self, component_id: u64) -> Result<(), Error> {
+        #[inline(always)]
         fn work(config: &Config, component_id: u64) -> Result<(), Error> {
             config.ctx.borrow_mut().funcall(
                 &config.symbols.reset_power_active,

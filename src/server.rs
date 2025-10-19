@@ -120,7 +120,9 @@ impl microgrid_server::Microgrid for MicrogridServer {
             PowerType::Active => self
                 .config
                 .set_power_active(request.electrical_component_id, request.power),
-            PowerType::Reactive => unimplemented!(),
+            PowerType::Reactive => self
+                .config
+                .set_power_reactive(request.electrical_component_id, request.power),
         };
 
         if let Err(err) = res {
@@ -128,6 +130,8 @@ impl microgrid_server::Microgrid for MicrogridServer {
             return Err(tonic::Status::failed_precondition(err.desc()));
         }
 
+        // TODO: when to reset? after latest request, or after older of the two
+        // power types?
         let duration = if let Some(dur) = request.request_lifetime {
             if dur < 10 || dur > 60 * 15 {
                 return Err(tonic::Status::invalid_argument(

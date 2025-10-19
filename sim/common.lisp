@@ -12,6 +12,10 @@
   (setq comp--id--counter (+ comp--id--counter 1)))
 
 
+(defun reactive-power-symbol-from-id (id)
+  (intern (format "component-reactive-power-%s" id)))
+
+
 (defun power-symbol-from-id (id)
   (intern (format "component-power-%s" id)))
 
@@ -34,6 +38,14 @@
 
 (defun bounds-check-func-symbol-from-id (id)
   (intern (format "component-bounds-check-func-%s" id)))
+
+
+(defun reactive-bounds-check-func-symbol-from-id (id)
+  (intern (format "component-reactive-bounds-check-func-%s" id)))
+
+
+(defun set-reactive-power-func-symbol-from-id (id)
+  (intern (format "component-set-reactive-power-func-%s" id)))
 
 
 (defun set-power-func-symbol-from-id (id)
@@ -146,7 +158,8 @@
 
 
 (defun set-power-active (id power)
-  (let* ((power-symbol (power-symbol-from-id id))
+  (let* (;; TODO: drop unused? power-symbol
+         (power-symbol (power-symbol-from-id id))
          (bounds-check-func (eval (bounds-check-func-symbol-from-id id)))
          (set-power-func (eval (set-power-func-symbol-from-id id)))
          (power (ftruncate power)))
@@ -157,6 +170,22 @@
           nil)
         (let ((err (format "Requested power %f is out of bounds for component id %d" power id)))
           (log.warn err)
+          ;; TODO: switch to throw instead of returning error string
+          err))))
+
+
+(defun set-power-reactive (id reactive-power)
+  (let* ((reactive-bounds-check-func (eval (reactive-bounds-check-func-symbol-from-id id)))
+         (set-reactive-power-func (eval (set-reactive-power-func-symbol-from-id id)))
+         (reactive-power (ftruncate reactive-power)))
+
+    (if (funcall reactive-bounds-check-func reactive-power)
+        (progn
+          (funcall set-reactive-power-func reactive-power)
+          nil)
+        (let ((err (format "Requested reactive power %f is out of bounds for component id %d" reactive-power id)))
+          (log.warn err)
+          ;; TODO: switch to throw instead of returning error string
           err))))
 
 
