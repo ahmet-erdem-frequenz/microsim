@@ -34,7 +34,7 @@ use crate::proto::{
 };
 use notify::{RecommendedWatcher, Watcher};
 use prost_types::Timestamp;
-use tulisp::{Error, ErrorKind, TulispContext, TulispObject, destruct_bind, intern, list};
+use tulisp::{Error, TulispContext, TulispObject, destruct_bind, intern, list};
 
 type CompDataMaker = fn(
     &mut TulispContext,
