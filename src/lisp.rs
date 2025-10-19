@@ -12,19 +12,18 @@ use crate::proto::{
     common::v1alpha8::{
         grid::{DeliveryArea, EnergyMarketCodeType},
         metrics::{
-            metric_value_variant, Bounds, Metric, MetricSample, MetricValueVariant,
-            SimpleMetricValue,
+            Bounds, Metric, MetricSample, MetricValueVariant, SimpleMetricValue,
+            metric_value_variant,
         },
         microgrid::{
+            MicrogridStatus,
             electrical_components::{
-                electrical_component_category_specific_info::Kind, Battery, BatteryType,
-                ElectricalComponent, ElectricalComponentCategory,
+                Battery, BatteryType, ElectricalComponent, ElectricalComponentCategory,
                 ElectricalComponentCategorySpecificInfo, ElectricalComponentConnection,
                 ElectricalComponentStateCode, ElectricalComponentStateSnapshot,
                 ElectricalComponentTelemetry, EvCharger, EvChargerType, GridConnectionPoint,
-                Inverter, InverterType,
+                Inverter, InverterType, electrical_component_category_specific_info::Kind,
             },
-            MicrogridStatus,
         },
     },
     microgrid::v1alpha18::{
@@ -35,7 +34,7 @@ use crate::proto::{
 };
 use notify::{RecommendedWatcher, Watcher};
 use prost_types::Timestamp;
-use tulisp::{destruct_bind, intern, list, Error, ErrorKind, TulispContext, TulispObject};
+use tulisp::{Error, TulispContext, TulispObject, destruct_bind, intern, list};
 
 type CompDataMaker = fn(
     &mut TulispContext,
@@ -46,12 +45,14 @@ type CompDataMaker = fn(
 intern! {
     #[derive(Clone)]
     pub(crate) struct Symbols {
+        state_update_interval_ms: "state-update-interval-ms",
+        reactive_power: "reactive-power",
+        power: "power",
+        name: "name",
         id: "id",
         soc: "soc",
-        name: "name",
         data: "data",
         type_: "type",
-        power: "power",
         status: "status",
         stream: "stream",
         voltage: "voltage",
@@ -67,15 +68,16 @@ intern! {
         cable_state: "cable-state",
         socket_addr: "socket-addr",
         ac_frequency: "ac-frequency",
-        microgrid_id: "microgrid-id",
+        component_state: "component-state",
+        set_power_reactive: "set-power-reactive",
         enterprise_id: "enterprise-id",
+        microgrid_id: "microgrid-id",
         delivery_area: "delivery-area",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
         exclusion_upper: "exclusion-upper",
         per_phase_power: "per-phase-power",
-        component_state: "component-state",
         components_alist: "components-alist",
         set_power_active: "set-power-active",
         create_timestamp: "create-timestamp",
@@ -83,7 +85,7 @@ intern! {
         rated_fuse_current: "rated-fuse-current",
         reset_power_active: "reset-power-active",
         state_update_functions: "state-update-functions",
-        state_update_interval_ms: "state-update-interval-ms",
+        per_phase_reactive_power: "per-phase-reactive-power",
         retain_requests_duration_ms: "retain-requests-duration-ms",
     }
 }
@@ -111,16 +113,12 @@ unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
 macro_rules! alist_get_as {
-    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{
-        alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn())
-    }};
+    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{ alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn()) }};
     ($ctx: expr, $rest:expr, $key:expr, eval++$as_fn:ident) => {{
         let out = alist_get_as!($ctx, $rest, $key);
-        out.and_then(|x| $ctx.eval_and_then(&x, |x| x.$as_fn()))
+        out.and_then(|x| $ctx.eval_and_then(&x, |_, x| x.$as_fn()))
     }};
-    ($ctx: expr, $rest:expr, $key:expr) => {{
-        tulisp::lists::alist_get($ctx, $key, $rest, None, None, None)
-    }};
+    ($ctx: expr, $rest:expr, $key:expr) => {{ tulisp::lists::alist_get($ctx, $key, $rest, None, None, None) }};
 }
 
 macro_rules! alist_get_f32 {
@@ -145,16 +143,13 @@ macro_rules! alist_get_3_phase {
         };
         (
             items
-                .car()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .car_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .cadr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .cadr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .caddr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .caddr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
         )
     }};
@@ -547,7 +542,20 @@ Invalid socket-addr.  Add a config line in this format:
         Ok(())
     }
 
+    pub fn set_power_reactive(&self, component_id: u64, power: f32) -> Result<(), Error> {
+        let res = self.ctx.borrow_mut().funcall(
+            &self.symbols.set_power_reactive,
+            &list![(component_id as i64).into(), (power as f64).into()]?,
+        )?;
+
+        if !res.null() {
+            return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
+        }
+        Ok(())
+    }
+
     pub fn reset_power_active(&self, component_id: u64) -> Result<(), Error> {
+        #[inline(always)]
         fn work(config: &Config, component_id: u64) -> Result<(), Error> {
             config.ctx.borrow_mut().funcall(
                 &config.symbols.reset_power_active,
@@ -789,8 +797,10 @@ impl Config {
         let current = alist_get_3_phase!(ctx, &alist, &symbols.current);
         let voltage = alist_get_3_phase!(ctx, &alist, &symbols.voltage);
         let per_phase_power = alist_get_3_phase!(ctx, &alist, &symbols.per_phase_power);
-
         let power = alist_get_f32!(ctx, &alist, &symbols.power);
+        let per_phase_reactive_power =
+            alist_get_3_phase!(ctx, &alist, &symbols.per_phase_reactive_power);
+        let reactive_power = alist_get_f32!(ctx, &alist, &symbols.reactive_power);
 
         let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
         let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
@@ -884,6 +894,42 @@ impl Config {
             },
             MetricSample {
                 sample_time: now,
+                metric: Metric::AcPowerReactivePhase1 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.0,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase2 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.1,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase3 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
                 metric: Metric::AcPowerActivePhase1 as i32,
                 value: Some(MetricValueVariant {
                     metric_value_variant: Some(
@@ -913,6 +959,18 @@ impl Config {
                     metric_value_variant: Some(
                         metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
                             value: per_phase_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactive as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: reactive_power,
                         }),
                     ),
                 }),
@@ -996,13 +1054,15 @@ impl Config {
                 metric_samples: Self::ac_from_alist(ctx, now, alist, symbols)?,
                 state_snapshots: vec![ElectricalComponentStateSnapshot {
                     origin_time: now,
-                    states: vec![enum_from_alist::<ElectricalComponentStateCode>(
-                        ctx,
-                        &alist,
-                        &symbols.component_state,
-                        true,
-                    )
-                    .unwrap_or_default() as i32],
+                    states: vec![
+                        enum_from_alist::<ElectricalComponentStateCode>(
+                            ctx,
+                            &alist,
+                            &symbols.component_state,
+                            true,
+                        )
+                        .unwrap_or_default() as i32,
+                    ],
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -1070,7 +1130,7 @@ fn add_functions(ctx: &mut TulispContext) {
     ctx.add_special_form("random", |ctx, args| {
         destruct_bind!((&optional limit) = args);
         let rnd = if limit.null() {
-            rand::thread_rng().gen()
+            rand::thread_rng().r#gen()
         } else {
             let limit = ctx.eval(&limit)?.try_into()?;
             rand::thread_rng().gen_range(0..limit)

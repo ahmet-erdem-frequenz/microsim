@@ -1,22 +1,22 @@
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::lisp::Config;
 
 use crate::proto::microgrid::v1alpha18::{
-    microgrid_server, AckElectricalComponentErrorRequest, AugmentElectricalComponentBoundsRequest,
+    AckElectricalComponentErrorRequest, AugmentElectricalComponentBoundsRequest,
     AugmentElectricalComponentBoundsResponse, GetMicrogridResponse,
     ListElectricalComponentConnectionsRequest, ListElectricalComponentConnectionsResponse,
     ListElectricalComponentsRequest, ListElectricalComponentsResponse, ListSensorRequest,
-    ListSensorsResponse, PutElectricalComponentInStandbyRequest,
+    ListSensorsResponse, PowerType, PutElectricalComponentInStandbyRequest,
     ReceiveElectricalComponentTelemetryStreamRequest,
     ReceiveElectricalComponentTelemetryStreamResponse, ReceiveSensorTelemetryStreamRequest,
     ReceiveSensorTelemetryStreamResponse, SetElectricalComponentPowerRequest,
     SetElectricalComponentPowerRequestStatus, SetElectricalComponentPowerResponse,
-    StartElectricalComponentRequest, StopElectricalComponentRequest,
+    StartElectricalComponentRequest, StopElectricalComponentRequest, microgrid_server,
 };
 
 pub struct MicrogridServer {
@@ -105,6 +105,33 @@ impl microgrid_server::Microgrid for MicrogridServer {
     ) -> std::result::Result<tonic::Response<Self::SetElectricalComponentPowerStream>, tonic::Status>
     {
         let request = request.into_inner();
+        let Ok(power_type) = PowerType::try_from(request.power_type) else {
+            return Err(tonic::Status::invalid_argument(format!(
+                "Invalid power type: {}",
+                request.power_type
+            )));
+        };
+        let res = match power_type {
+            PowerType::Unspecified => {
+                return Err(tonic::Status::invalid_argument(
+                    "Power type cannot be UNSPECIFIED.",
+                ));
+            }
+            PowerType::Active => self
+                .config
+                .set_power_active(request.electrical_component_id, request.power),
+            PowerType::Reactive => self
+                .config
+                .set_power_reactive(request.electrical_component_id, request.power),
+        };
+
+        if let Err(err) = res {
+            log::error!("Tulisp error:\n{}", err.format(&self.config.ctx.borrow()));
+            return Err(tonic::Status::failed_precondition(err.desc()));
+        }
+
+        // TODO: when to reset? after latest request, or after older of the two
+        // power types?
         let duration = if let Some(dur) = request.request_lifetime {
             if dur < 10 || dur > 60 * 15 {
                 return Err(tonic::Status::invalid_argument(
@@ -118,14 +145,6 @@ impl microgrid_server::Microgrid for MicrogridServer {
         self.timeout_tracker
             .add(request.electrical_component_id, duration);
 
-        let res = self
-            .config
-            .set_power_active(request.electrical_component_id, request.power);
-
-        if let Err(err) = res {
-            log::error!("Tulisp error:\n{}", err.format(&self.config.ctx.borrow()));
-            return Err(tonic::Status::failed_precondition(err.desc()));
-        }
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         let output_stream = ReceiverStream::new(rx);
 

@@ -21,11 +21,12 @@
 
 ;; API service config
 (setq socket-addr "[::1]:8800")  ;; Needs restart to take effect.
-(setq retain-requests-duration-ms 60000)
 (setq battery-interval 1000)
 (setq inverter-interval 1000)
-(setq meter-interval 200)
+(setq meter-interval 1000)
 (setq ev-charger-interval 1000)
+(setq retain-requests-duration-ms 60000) ;; can be overriden by
+                                         ;; individual requests
 
 
 ;; Microgrid config
@@ -44,18 +45,20 @@
 (every
  :milliseconds 200
  :call (lambda ()
-         (setq consumer-power
-               (+ 48000 (random 100)))
+         (setq consumer-per-phase-power
+               (list (+ 16000.0 (random 50))
+                     (+ 16000.0 (random 50))
+                     (+ 16000.0 (random 50))))
+
+         (setq consumer-per-phase-reactive-power
+               (list (+ 1600.0 (random 20))
+                     (+ 1600.0 (random 20))
+                     (+ 1600.0 (random 20))))
 
          (setq voltage-per-phase
                (list (+ 229.0 (/ (random 200) 100.0))
                      (+ 229.0 (/ (random 200) 100.0))
                      (+ 229.0 (/ (random 200) 100.0))))
-
-         (setq power-factor-per-phase
-               (list (+ 0.88 (/ (random 5) 100.0))
-                     (+ 0.88 (/ (random 5) 100.0))
-                     (+ 0.88 (/ (random 5) 100.0))))
 
          (setq ac-frequency
                (+ 49.99 (/ (random 4) 100.0)))))
@@ -106,6 +109,7 @@
               ;; main-meter
               (make-meter
                :id 2
+               :interval 200
                :successors (list
                             ;; battery 1
                             (make-meter
@@ -146,5 +150,6 @@
                             ;; consumer
                             (make-meter
                              :hidden t
-                             :power 'consumer-power)))))
-
+                             :per-phase-power 'consumer-per-phase-power
+                             :per-phase-reactive-power 'consumer-per-phase-reactive-power
+                             )))))
