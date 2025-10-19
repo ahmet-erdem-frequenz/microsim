@@ -1309,7 +1309,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tulisp"
-version = "0.20.0"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4befac48d1a98922de23c13be926ee9562e35cd0b1f32ffa9c086ec6dbdc2d32"
 dependencies = [
  "tulisp-proc-macros",
 ]
