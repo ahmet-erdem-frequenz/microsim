@@ -363,10 +363,6 @@
                          `((power . (seq-reduce '+ ,per-phase-power 0.0))
                            (per-phase-power . ,per-phase-power)))))
             ))
-         (current-expr (when power-expr
-                         `((current . (ac-current-from-per-phase-power
-                                       ,(alist-get 'per-phase-power power-expr)))
-                           (voltage . voltage-per-phase))))
          (reactive-power-expr
           (when is-healthy
             (cond
@@ -381,6 +377,13 @@
               (:else (if-let ((per-phase-reactive-power (make-per-phase-reactive-power-expr successors)))
                          `((reactive-power . (seq-reduce '+ ,per-phase-reactive-power 0.0))
                            (per-phase-reactive-power . ,per-phase-reactive-power)))))))
+         (current-expr (when power-expr
+                         `((current . (ac-current-from-per-phase-power
+                                       (calc-per-phase-apparent-power
+                                        ,(alist-get 'per-phase-power power-expr)
+                                        ,(alist-get 'per-phase-reactive-power
+                                                    reactive-power-expr))))
+                           (voltage . voltage-per-phase))))
          (meter
           `((category . meter)
             (name     . ,(format "meter-%s" id))

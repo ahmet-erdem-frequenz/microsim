@@ -39,6 +39,7 @@
 (defun set-power-func-symbol-from-id (id)
   (intern (format "component-set-power-func-%s" id)))
 
+
 (defun reset-power-func-symbol-from-id (id)
   (intern (format "component-reset-power-func-%s" id)))
 
@@ -158,6 +159,7 @@
           (log.warn err)
           err))))
 
+
 (defun reset-power-active (id)
   (let* ((reset-power-func (eval (reset-power-func-symbol-from-id id))))
     (if reset-power-func
@@ -197,6 +199,18 @@
               (/ (cadr per-phase-power) (cadr voltage-per-phase))
               (/ (caddr per-phase-power) (caddr voltage-per-phase)))
       '(0.0 0.0 0.0)))
+
+
+(defun calc-per-phase-apparent-power (per-phase-power per-phase-reactive-power)
+  (if (and (consp per-phase-power)
+           (consp per-phase-reactive-power))
+      (list (sqrt (+ (expt (car per-phase-power) 2)
+                     (expt (car per-phase-reactive-power) 2)))
+            (sqrt (+ (expt (cadr per-phase-power) 2)
+                     (expt (cadr per-phase-reactive-power) 2)))
+            (sqrt (+ (expt (caddr per-phase-power) 2)
+                     (expt (caddr per-phase-reactive-power) 2))))
+    '(0.0 0.0 0.0)))
 
 
 (defun calc-per-phase-power (power)
