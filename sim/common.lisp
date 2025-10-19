@@ -230,6 +230,15 @@
       '(0.0 0.0 0.0)))
 
 
+(defun calc-apparent-power (power reactive-power)
+  (if (and (numberp power)
+           (numberp reactive-power))
+        (let ((per-phase-power (calc-per-phase-power power))
+              (per-phase-reactive-power (calc-per-phase-power reactive-power)))
+          (calc-per-phase-apparent-power per-phase-power per-phase-reactive-power))
+        '(0.0 0.0 0.0)))
+
+
 (defun calc-per-phase-apparent-power (per-phase-power per-phase-reactive-power)
   (if (and (consp per-phase-power)
            (consp per-phase-reactive-power))

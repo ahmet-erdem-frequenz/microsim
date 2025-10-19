@@ -131,8 +131,9 @@
 (defmacro inverter-data-maker (data-alist defaults-alist)
   (component-data-maker data-alist
                         defaults-alist
-                        '(id power current voltage component-state
-                          per-phase-power inclusion-lower inclusion-upper)))
+                        '(id power current voltage component-state reactive-power
+                          per-phase-reactive-power per-phase-power inclusion-lower
+                          inclusion-upper)))
 
 (defun make-battery-inverter (&rest plist)
   (let* ((id (or (plist-get plist :id) (get-comp-id)))
@@ -240,6 +241,7 @@
          (config-alist `(,@config ,@solar-inverter-defaults))
 
          (power-symbol  (power-symbol-from-id id))
+         (reactive-power-symbol (reactive-power-symbol-from-id id))
          (min-power-symbol (power-symbol-from-id (format "min-%s" id)))
 
          (rated-bounds (or (alist-get 'rated-bounds config-alist) '(0.0 0.0)))
@@ -250,15 +252,21 @@
 
          (power-expr (when is-healthy
                        `((power . ,power-symbol)
+                         (reactive-power . ,reactive-power-symbol)
                          (per-phase-power . (calc-per-phase-power ,power-symbol))
+                         (per-phase-reactive-power . (calc-per-phase-power ,reactive-power-symbol))
                          (voltage . voltage-per-phase)
-                         (current . (ac-current-from-power
-                                     ,power-symbol))
+                         (current . (ac-current-from-per-phase-power
+                                     (calc-apparent-power
+                                      ,power-symbol
+                                      ,reactive-power-symbol)))
                          (component-state . (power->component-state
                                              ,power-symbol)))))
 
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
+         (reactive-bounds-check-func-symbol (reactive-bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (set-reactive-power-func-symbol (set-reactive-power-func-symbol-from-id id))
          (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
@@ -283,12 +291,22 @@
       (set min-power-symbol rated-lower))
 
     (set power-symbol (max (eval min-power-symbol) (* rated-lower (/ sunlight% 100.0))))
+    (set reactive-power-symbol 0.0)
 
     (set bounds-check-func-symbol
          (if is-healthy
              (list 'lambda '(power)
                    `(<= ,rated-lower power ,rated-upper))
              (list 'lambda '(power)
+                   (log.error "inverter is unhealthy")
+                   nil)))
+
+    (set reactive-bounds-check-func-symbol
+         (if is-healthy
+             (list 'lambda '(reactive-power)
+                   `(and (>= reactive-power (* -0.35 (abs ,power-symbol)))
+                         (<= reactive-power (* 0.35 (abs ,power-symbol)))))
+             (list 'lambda '(reactive-power)
                    (log.error "inverter is unhealthy")
                    nil)))
 
@@ -316,6 +334,18 @@
            '(lambda (power)
              (log.error "Can't set power: inverter is unhealthy")
              nil)))
+
+    (set set-reactive-power-func-symbol
+         (if is-healthy
+             `(lambda (reactive-power)
+                (log.info (format "Setting reactive power of inverter %s to %s VAR (was: %s VAR)"
+                                  ,id
+                                  reactive-power
+                                  ,reactive-power-symbol))
+                (setq ,reactive-power-symbol reactive-power))
+             '(lambda (reactive-power)
+               (log.error "Can't set reactive power: inverter is unhealthy")
+               nil)))
 
     (add-to-components-alist inverter)
     inverter))
