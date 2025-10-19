@@ -151,18 +151,30 @@
 
          (is-healthy (is-healthy-inverter config-alist))
 
+         (reactive-power-symbol (reactive-power-symbol-from-id id))
+
          (power-expr (when is-healthy
-                       `((power . ,(make-power-expr successors))
+                       `(;; TODO; change batteries DC power to match
+                         ;; AC apparent power. With below approach,
+                         ;; battery power only corresponds to the real
+                         ;; power.
+                         (power . ,(make-power-expr successors))
                          (per-phase-power . (calc-per-phase-power ,(make-power-expr successors)))
+                         (reactive-power . ,reactive-power-symbol)
+                         (per-phase-reactive-power . (calc-per-phase-power ,reactive-power-symbol))
                          (voltage . voltage-per-phase)
-                         (current . (ac-current-from-power
-                                     ,(make-power-expr successors)))
+                         (current . (ac-current-from-per-phase-power
+                                     (calc-apparent-power
+                                      ,(make-power-expr successors)
+                                      ,reactive-power-symbol)))
                          (component-state . (power->component-state
                                              ,(make-power-expr successors))))))
          (bounds-expr `((inclusion-lower . ,rated-lower)
                         (inclusion-upper . ,rated-upper)))
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
+         (reactive-bounds-check-func-symbol (reactive-bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (set-reactive-power-func-symbol (set-reactive-power-func-symbol-from-id id))
          (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
@@ -181,6 +193,19 @@
                                         config-alist))))))))
 
     (log.trace (format "Adding battery inverter %s. Healthy: %s" id is-healthy))
+
+    (set reactive-power-symbol 0.0)
+
+    (set reactive-bounds-check-func-symbol
+         (if is-healthy
+             (eval (list 'lambda '(reactive-power)
+                         `(let ((abs-power (abs ,(make-power-expr successors))))
+                            (and
+                             (>= reactive-power (* -0.35 abs-power))
+                             (<= reactive-power (* 0.35 abs-power))))))
+             (eval (list 'lambda '(reactive-power)
+                         (log.error "inverter is unhealthy")
+                         nil))))
 
     (set bounds-check-func-symbol
          (if is-healthy
@@ -224,8 +249,20 @@
                   ,@expr)
                '(lambda (power)
                   (log.error "Can't set power: no healthy batteries")
-                  nil))
-           ))
+                  nil))))
+
+    (set set-reactive-power-func-symbol
+         (if is-healthy
+             (eval `(lambda (reactive-power)
+                      (log.info (format
+                                 "Setting reactive power of inverter %s to %s VAR (was: %s VAR)"
+                                 ,id
+                                 reactive-power
+                                 ,reactive-power-symbol))
+                      (setq ,reactive-power-symbol reactive-power)))
+             (lambda (reactive-power)
+               (log.error "Can't set reactive power: inverter is unhealthy")
+               nil)))
 
     (add-to-components-alist inverter)
     (connect-successors id successors)
