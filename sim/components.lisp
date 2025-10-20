@@ -183,6 +183,7 @@
             (name     . ,(format "inv-bat-%s" id))
             (id       . ,id)
             ,@power-expr
+            ,@bounds-expr
             (stream   . ,(list
                           `(interval . ,interval)
                           (cons 'data
@@ -311,6 +312,8 @@
             (type     . pv)
             (name     . ,(format "inv-pv-%s" id))
             (id       . ,id)
+            (inclusion-lower . ,rated-lower)
+            (inclusion-upper . ,rated-upper)
             ,@power-expr
             (stream   . ,(list
                           `(interval . ,interval)

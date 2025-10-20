@@ -22,7 +22,8 @@ use crate::proto::{
                 ElectricalComponentCategorySpecificInfo, ElectricalComponentConnection,
                 ElectricalComponentStateCode, ElectricalComponentStateSnapshot,
                 ElectricalComponentTelemetry, EvCharger, EvChargerType, GridConnectionPoint,
-                Inverter, InverterType, electrical_component_category_specific_info::Kind,
+                Inverter, InverterType, MetricConfigBounds,
+                electrical_component_category_specific_info::Kind,
             },
         },
     },
@@ -215,6 +216,9 @@ fn make_component_from_alist(
         _ => None,
     };
 
+    let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
+    let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
+
     let comp = ElectricalComponent {
         id,
         name,
@@ -223,7 +227,13 @@ fn make_component_from_alist(
         category_specific_info: Some(ElectricalComponentCategorySpecificInfo { kind }),
         // status: todo!(),  // TODO: Add status
         // operational_lifetime: todo!(),
-        // metric_config_bounds: todo!(),   // TODO: Add bounds
+        metric_config_bounds: vec![MetricConfigBounds {
+            metric: Metric::AcPowerActive as i32,
+            config_bounds: Some(Bounds {
+                lower: Some(inclusion_lower),
+                upper: Some(inclusion_upper),
+            }),
+        }],
         ..Default::default()
     };
 
