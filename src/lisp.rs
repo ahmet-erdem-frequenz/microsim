@@ -1,3 +1,5 @@
+mod time;
+
 use rand::Rng;
 use std::{
     cell::{Cell, RefCell},
@@ -1133,4 +1135,6 @@ fn add_functions(ctx: &mut TulispContext) {
                 rand::thread_rng().r#gen()
             }
         });
+
+    crate::lisp::time::add(ctx);
 }
