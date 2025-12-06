@@ -35,7 +35,7 @@ use crate::proto::{
 };
 use notify::{RecommendedWatcher, Watcher};
 use prost_types::Timestamp;
-use tulisp::{Error, TulispContext, TulispObject, destruct_bind, intern, list};
+use tulisp::{Error, TulispContext, TulispObject, intern, list};
 
 type CompDataMaker = fn(
     &mut TulispContext,
@@ -1121,30 +1121,16 @@ impl Config {
 }
 
 fn add_functions(ctx: &mut TulispContext) {
-    macro_rules! log_impl {
-        ($level:ident) => {
-            |ctx, args| {
-                destruct_bind!((msg) = args);
-                log::$level!("{}", ctx.eval(&msg)?.as_string()?);
-                Ok(TulispObject::nil())
+    ctx.add_function("log.info", |msg: String| log::info!("{msg}"))
+        .add_function("log.warn", |msg: String| log::warn!("{msg}"))
+        .add_function("log.error", |msg: String| log::error!("{msg}"))
+        .add_function("log.debug", |msg: String| log::debug!("{msg}"))
+        .add_function("log.trace", |msg: String| log::trace!("{msg}"))
+        .add_function("random", |limit: Option<i64>| {
+            if let Some(limit) = limit {
+                rand::thread_rng().gen_range(0..limit)
+            } else {
+                rand::thread_rng().r#gen()
             }
-        };
-    }
-
-    ctx.add_special_form("log.info", log_impl!(info));
-    ctx.add_special_form("log.warn", log_impl!(warn));
-    ctx.add_special_form("log.error", log_impl!(error));
-    ctx.add_special_form("log.debug", log_impl!(debug));
-    ctx.add_special_form("log.trace", log_impl!(trace));
-
-    ctx.add_special_form("random", |ctx, args| {
-        destruct_bind!((&optional limit) = args);
-        let rnd = if limit.null() {
-            rand::thread_rng().r#gen()
-        } else {
-            let limit = ctx.eval(&limit)?.try_into()?;
-            rand::thread_rng().gen_range(0..limit)
-        };
-        Ok(rnd.into())
-    });
+        });
 }
