@@ -1,6 +1,6 @@
 use common::v1alpha8::{
     grid::EnergyMarketCodeType,
-    microgrid::{electrical_components::ElectricalComponentStateCode, MicrogridStatus},
+    microgrid::{MicrogridStatus, electrical_components::ElectricalComponentStateCode},
 };
 
 use crate::proto::common::v1alpha8::microgrid::electrical_components::{

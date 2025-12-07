@@ -188,10 +188,10 @@ fn make_component_from_alist(
     let Some(category) =
         enum_from_alist::<ElectricalComponentCategory>(ctx, alist, &symbols.category, false)
     else {
-        return Err(Error::new(
-            tulisp::ErrorKind::Uninitialized,
-            format!("Invalid component category for component {}", id),
-        ));
+        return Err(Error::invalid_argument(format!(
+            "Invalid component category for component {}",
+            id
+        )));
     };
 
     let kind = match category {
@@ -548,8 +548,9 @@ Invalid socket-addr.  Add a config line in this format:
             &list![(component_id as i64).into(), (power as f64).into()]?,
         )?;
 
+        // TODO: use throw from tulisp to return errors
         if !res.null() {
-            return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
+            return Err(Error::lisp_error(res.as_string()?).with_trace(res));
         }
         Ok(())
     }
@@ -560,8 +561,9 @@ Invalid socket-addr.  Add a config line in this format:
             &list![(component_id as i64).into(), (power as f64).into()]?,
         )?;
 
+        // TODO: use throw from tulisp to return errors
         if !res.null() {
-            return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
+            return Err(Error::lisp_error(res.as_string()?).with_trace(res));
         }
         Ok(())
     }
@@ -589,10 +591,10 @@ Invalid socket-addr.  Add a config line in this format:
             ElectricalComponentCategory::Inverter => Self::inverter_data,
             ElectricalComponentCategory::Meter => Self::meter_data,
             ElectricalComponentCategory::EvCharger => Self::ev_charger_data,
-            _ => Err(Error::new(
-                tulisp::ErrorKind::Uninitialized,
-                format!("Invalid component category for component {}", component_id),
-            ))
+            _ => Err(Error::invalid_argument(format!(
+                "Invalid component category for component {}",
+                component_id
+            )))
             .unwrap(),
         }
     }
