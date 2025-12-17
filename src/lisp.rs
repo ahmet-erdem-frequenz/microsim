@@ -735,7 +735,7 @@ impl Config {
                     },
                     MetricSample {
                         sample_time: now,
-                        metric: Metric::AcVoltage as i32,
+                        metric: Metric::DcVoltage as i32,
                         value: Some(MetricValueVariant {
                             metric_value_variant: Some(
                                 metric_value_variant::MetricValueVariant::SimpleMetric(
@@ -747,7 +747,7 @@ impl Config {
                     },
                     MetricSample {
                         sample_time: now,
-                        metric: Metric::AcCurrent as i32,
+                        metric: Metric::DcCurrent as i32,
                         value: Some(MetricValueVariant {
                             metric_value_variant: Some(
                                 metric_value_variant::MetricValueVariant::SimpleMetric(
@@ -759,7 +759,7 @@ impl Config {
                     },
                     MetricSample {
                         sample_time: now,
-                        metric: Metric::AcPowerActive as i32,
+                        metric: Metric::DcPower as i32,
                         value: Some(MetricValueVariant {
                             metric_value_variant: Some(
                                 metric_value_variant::MetricValueVariant::SimpleMetric(
