@@ -221,6 +221,10 @@ fn make_component_from_alist(
     let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
     let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
 
+    // Copy active bounds to reactive bounds.
+    let reactive_upper = inclusion_lower.abs().max(inclusion_upper.abs());
+    let reactive_lower = -reactive_upper;
+
     let comp = ElectricalComponent {
         id,
         name,
@@ -229,13 +233,22 @@ fn make_component_from_alist(
         category_specific_info: Some(ElectricalComponentCategorySpecificInfo { kind }),
         // status: todo!(),  // TODO: Add status
         // operational_lifetime: todo!(),
-        metric_config_bounds: vec![MetricConfigBounds {
-            metric: Metric::AcPowerActive as i32,
-            config_bounds: Some(Bounds {
-                lower: Some(inclusion_lower),
-                upper: Some(inclusion_upper),
-            }),
-        }],
+        metric_config_bounds: vec![
+            MetricConfigBounds {
+                metric: Metric::AcPowerActive as i32,
+                config_bounds: Some(Bounds {
+                    lower: Some(inclusion_lower),
+                    upper: Some(inclusion_upper),
+                }),
+            },
+            MetricConfigBounds {
+                metric: Metric::AcPowerReactive as i32,
+                config_bounds: Some(Bounds {
+                    lower: Some(reactive_lower),
+                    upper: Some(reactive_upper),
+                }),
+            },
+        ],
         ..Default::default()
     };
 
