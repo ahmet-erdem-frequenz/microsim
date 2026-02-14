@@ -1,6 +1,6 @@
-use std::{fmt::Display, rc::Rc};
+use std::fmt::Display;
 
-use tulisp::{Error, TulispAny, TulispContext, TulispObject};
+use tulisp::{Error, Shared, TulispContext, TulispObject};
 
 pub(crate) fn add(ctx: &mut TulispContext) {
     ctx.add_function("dt:now", || TulispDateTime::from(chrono::Utc::now()));
@@ -85,8 +85,7 @@ impl From<chrono::DateTime<chrono::Utc>> for TulispDateTime {
 
 impl From<TulispDateTime> for TulispObject {
     fn from(value: TulispDateTime) -> Self {
-        let rcany: Rc<dyn TulispAny> = Rc::new(value);
-        TulispObject::from(rcany)
+        Shared::new(value).into()
     }
 }
 
@@ -121,8 +120,7 @@ impl From<chrono::TimeDelta> for TulispTimeDelta {
 
 impl From<TulispTimeDelta> for TulispObject {
     fn from(value: TulispTimeDelta) -> Self {
-        let rcany: Rc<dyn TulispAny> = Rc::new(value);
-        TulispObject::from(rcany)
+        Shared::new(value).into()
     }
 }
 

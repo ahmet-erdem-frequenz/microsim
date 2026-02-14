@@ -1376,9 +1376,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tulisp"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d05eabd01eb0f99f4f1065ad38b8e04c244a71aba99261af7d81453480f918f"
+checksum = "552906d6a099bfd421ba319f06c09790d25b4f420395a1e5f581796122f747df"
 
 [[package]]
 name = "unicode-ident"
