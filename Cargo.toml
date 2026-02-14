@@ -1,7 +1,7 @@
 [package]
 name = "microsim"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 tonic = "0.12.1"
@@ -9,12 +9,13 @@ prost = "0.13.1"
 prost-types = "0.13.1"
 tokio = { version = "1.39.2", features = ["rt", "macros"] }
 tokio-stream = "0.1.15"
-tulisp = "0.17.0"
+tulisp = "0.25.0"
 notify = "6.1.1"
 futures = "0.3.30"
 log = "0.4.22"
 simplelog = "0.12.2"
 rand = "0.8.5"
+chrono = "0.4.42"
 
 [build-dependencies]
 tonic-build = "0.12.1"

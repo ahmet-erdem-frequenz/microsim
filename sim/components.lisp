@@ -131,8 +131,9 @@
 (defmacro inverter-data-maker (data-alist defaults-alist)
   (component-data-maker data-alist
                         defaults-alist
-                        '(id power current voltage component-state
-                          per-phase-power inclusion-lower inclusion-upper)))
+                        '(id power current voltage component-state reactive-power
+                          per-phase-reactive-power per-phase-power inclusion-lower
+                          inclusion-upper)))
 
 (defun make-battery-inverter (&rest plist)
   (let* ((id (or (plist-get plist :id) (get-comp-id)))
@@ -150,18 +151,31 @@
 
          (is-healthy (is-healthy-inverter config-alist))
 
+         (reactive-power-symbol (reactive-power-symbol-from-id id))
+
          (power-expr (when is-healthy
-                       `((power . ,(make-power-expr successors))
+                       `(;; TODO; change batteries DC power to match
+                         ;; AC apparent power. With below approach,
+                         ;; battery power only corresponds to the real
+                         ;; power.
+                         (power . ,(make-power-expr successors))
                          (per-phase-power . (calc-per-phase-power ,(make-power-expr successors)))
+                         (reactive-power . ,reactive-power-symbol)
+                         (per-phase-reactive-power . (calc-per-phase-power ,reactive-power-symbol))
                          (voltage . voltage-per-phase)
-                         (current . (calc-per-phase-current
-                                     ,(make-power-expr successors)))
+                         (current . (ac-current-from-per-phase-power
+                                     (calc-apparent-power
+                                      ,(make-power-expr successors)
+                                      ,reactive-power-symbol)))
                          (component-state . (power->component-state
                                              ,(make-power-expr successors))))))
          (bounds-expr `((inclusion-lower . ,rated-lower)
                         (inclusion-upper . ,rated-upper)))
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
+         (reactive-bounds-check-func-symbol (reactive-bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (set-reactive-power-func-symbol (set-reactive-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
           `((category . inverter)
@@ -169,6 +183,7 @@
             (name     . ,(format "inv-bat-%s" id))
             (id       . ,id)
             ,@power-expr
+            ,@bounds-expr
             (stream   . ,(list
                           `(interval . ,interval)
                           (cons 'data
@@ -179,6 +194,19 @@
                                         config-alist))))))))
 
     (log.trace (format "Adding battery inverter %s. Healthy: %s" id is-healthy))
+
+    (set reactive-power-symbol 0.0)
+
+    (set reactive-bounds-check-func-symbol
+         (if is-healthy
+             (eval (list 'lambda '(reactive-power)
+                         `(let ((abs-power (abs ,(make-power-expr successors))))
+                            (and
+                             (>= reactive-power (* -0.35 abs-power))
+                             (<= reactive-power (* 0.35 abs-power))))))
+             (eval (list 'lambda '(reactive-power)
+                         (log.error "inverter is unhealthy")
+                         nil))))
 
     (set bounds-check-func-symbol
          (if is-healthy
@@ -191,6 +219,11 @@
              (eval (list 'lambda '(power)
                          (log.error "inverter is unhealthy")
                          nil))))
+
+    (set reset-power-func-symbol
+         `(lambda ()
+            (dolist (battery (quote ,successors))
+              (set (power-symbol-from-id (alist-get 'id battery)) 0.0))))
 
     (set set-power-func-symbol
          (let* ((healthy-batteries (seq-filter
@@ -217,8 +250,20 @@
                   ,@expr)
                '(lambda (power)
                   (log.error "Can't set power: no healthy batteries")
-                  nil))
-           ))
+                  nil))))
+
+    (set set-reactive-power-func-symbol
+         (if is-healthy
+             (eval `(lambda (reactive-power)
+                      (log.info (format
+                                 "Setting reactive power of inverter %s to %s VAR (was: %s VAR)"
+                                 ,id
+                                 reactive-power
+                                 ,reactive-power-symbol))
+                      (setq ,reactive-power-symbol reactive-power)))
+             (lambda (reactive-power)
+               (log.error "Can't set reactive power: inverter is unhealthy")
+               nil)))
 
     (add-to-components-alist inverter)
     (connect-successors id successors)
@@ -234,6 +279,7 @@
          (config-alist `(,@config ,@solar-inverter-defaults))
 
          (power-symbol  (power-symbol-from-id id))
+         (reactive-power-symbol (reactive-power-symbol-from-id id))
          (min-power-symbol (power-symbol-from-id (format "min-%s" id)))
 
          (rated-bounds (or (alist-get 'rated-bounds config-alist) '(0.0 0.0)))
@@ -244,21 +290,30 @@
 
          (power-expr (when is-healthy
                        `((power . ,power-symbol)
+                         (reactive-power . ,reactive-power-symbol)
                          (per-phase-power . (calc-per-phase-power ,power-symbol))
+                         (per-phase-reactive-power . (calc-per-phase-power ,reactive-power-symbol))
                          (voltage . voltage-per-phase)
-                         (current . (calc-per-phase-current
-                                     ,power-symbol))
+                         (current . (ac-current-from-per-phase-power
+                                     (calc-apparent-power
+                                      ,power-symbol
+                                      ,reactive-power-symbol)))
                          (component-state . (power->component-state
                                              ,power-symbol)))))
 
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
+         (reactive-bounds-check-func-symbol (reactive-bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (set-reactive-power-func-symbol (set-reactive-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (inverter
           `((category . inverter)
-            (type     . solar)
+            (type     . pv)
             (name     . ,(format "inv-pv-%s" id))
             (id       . ,id)
+            (inclusion-lower . ,rated-lower)
+            (inclusion-upper . ,rated-upper)
             ,@power-expr
             (stream   . ,(list
                           `(interval . ,interval)
@@ -276,6 +331,7 @@
       (set min-power-symbol rated-lower))
 
     (set power-symbol (max (eval min-power-symbol) (* rated-lower (/ sunlight% 100.0))))
+    (set reactive-power-symbol 0.0)
 
     (set bounds-check-func-symbol
          (if is-healthy
@@ -284,6 +340,20 @@
              (list 'lambda '(power)
                    (log.error "inverter is unhealthy")
                    nil)))
+
+    (set reactive-bounds-check-func-symbol
+         (if is-healthy
+             (list 'lambda '(reactive-power)
+                   `(and (>= reactive-power (* -0.35 (abs ,power-symbol)))
+                         (<= reactive-power (* 0.35 (abs ,power-symbol)))))
+             (list 'lambda '(reactive-power)
+                   (log.error "inverter is unhealthy")
+                   nil)))
+
+    (set reset-power-func-symbol
+         `(lambda ()
+            (setq ,min-power-symbol ,rated-lower)
+            (setq ,power-symbol (max ,rated-lower ,(* rated-lower (/ sunlight% 100))))))
 
     (set set-power-func-symbol
          (if is-healthy
@@ -305,6 +375,18 @@
              (log.error "Can't set power: inverter is unhealthy")
              nil)))
 
+    (set set-reactive-power-func-symbol
+         (if is-healthy
+             `(lambda (reactive-power)
+                (log.info (format "Setting reactive power of inverter %s to %s VAR (was: %s VAR)"
+                                  ,id
+                                  reactive-power
+                                  ,reactive-power-symbol))
+                (setq ,reactive-power-symbol reactive-power))
+             '(lambda (reactive-power)
+               (log.error "Can't set reactive power: inverter is unhealthy")
+               nil)))
+
     (add-to-components-alist inverter)
     inverter))
 
@@ -316,7 +398,9 @@
 (defmacro meter-data-maker (data-alist defaults-alist)
   (component-data-maker data-alist
                         defaults-alist
-                        '(id power per-phase-power current voltage component-state)))
+                        '(id power per-phase-power reactive-power
+                          per-phase-reactive-power current voltage
+                          component-state)))
 
 
 
@@ -324,6 +408,9 @@
   (let* ((id (or (plist-get plist :id) (get-comp-id)))
          (interval (or (plist-get plist :interval) meter-interval))
          (power (plist-get plist :power))
+         (per-phase-power (plist-get plist :per-phase-power))
+         (reactive-power (plist-get plist :reactive-power))
+         (per-phase-reactive-power (plist-get plist :per-phase-reactive-power))
 
          (config (plist-get plist :config))
          (config-alist `(,@config ,@meter-defaults))
@@ -331,18 +418,42 @@
          (successors (plist-get plist :successors))
          (hidden (plist-get plist :hidden))
          (is-healthy (is-healthy-meter config-alist))
-         (current-expr (when is-healthy
-                         (if-let ((current (if power
-                                               `(calc-per-phase-current ,power)
-                                               (make-current-expr successors)
-                                               )))
-                             `((current . ,current)))))
-         (power-expr (when is-healthy
-                       (if-let ((power (or power
-                                           (make-power-expr successors))))
-                           `((power . ,power)
-                             (per-phase-power . (calc-per-phase-power ,power))
-                             (voltage . voltage-per-phase)))))
+         (power-expr
+          (when is-healthy
+            (cond
+              ((and power per-phase-power)
+               (error (format "Can't use meter %s with both :power and :per-phase-power set" id)))
+              (per-phase-power
+               `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                 (per-phase-power . ,per-phase-power)))
+              (power
+               `((power . ,power)
+                 (per-phase-power . (calc-per-phase-power ,power))))
+              (:else (if-let ((per-phase-power (make-per-phase-power-expr successors)))
+                         `((power . (seq-reduce '+ ,per-phase-power 0.0))
+                           (per-phase-power . ,per-phase-power)))))
+            ))
+         (reactive-power-expr
+          (when is-healthy
+            (cond
+              ((and reactive-power per-phase-reactive-power)
+               (error (format "Can't use meter %s with both :reactive-power and :per-phase-reactive-power set" id)))
+              (per-phase-reactive-power
+               `((reactive-power . (seq-reduce '+ ,per-phase-reactive-power 0.0))
+                 (per-phase-reactive-power . ,per-phase-reactive-power)))
+              (reactive-power
+               `((reactive-power . ,reactive-power)
+                 (per-phase-reactive-power . (calc-per-phase-power ,reactive-power))))
+              (:else (if-let ((per-phase-reactive-power (make-per-phase-reactive-power-expr successors)))
+                         `((reactive-power . (seq-reduce '+ ,per-phase-reactive-power 0.0))
+                           (per-phase-reactive-power . ,per-phase-reactive-power)))))))
+         (current-expr (when power-expr
+                         `((current . (ac-current-from-per-phase-power
+                                       (calc-per-phase-apparent-power
+                                        ,(alist-get 'per-phase-power power-expr)
+                                        ,(alist-get 'per-phase-reactive-power
+                                                    reactive-power-expr))))
+                           (voltage . voltage-per-phase))))
          (meter
           `((category . meter)
             (name     . ,(format "meter-%s" id))
@@ -350,13 +461,15 @@
             (hidden   . ,hidden)
             ,@current-expr
             ,@power-expr
+            ,@reactive-power-expr
             (stream   . ,(list
                           `(interval . ,interval)
                           (cons 'data
                                 (macroexpand '(meter-data-maker
                                                `((id    . ,id)
                                                  ,@current-expr
-                                                 ,@power-expr)
+                                                 ,@power-expr
+                                                 ,@reactive-power-expr)
                                                config-alist))))))))
 
     (log.trace (format "Adding meter %s" id))
@@ -430,6 +543,7 @@
                         (inclusion-upper . ,rated-upper)))
          (bounds-check-func-symbol (bounds-check-func-symbol-from-id id))
          (set-power-func-symbol (set-power-func-symbol-from-id id))
+         (reset-power-func-symbol (reset-power-func-symbol-from-id id))
 
          (ev-charger
           `((category . ev-charger)
@@ -480,6 +594,10 @@
                    (log.error "ev-charger is unhealthy")
                    nil)))
 
+    (set reset-power-func-symbol
+         `(lambda ()
+            (setq ,power-symbol 0.0)))
+
     (set set-power-func-symbol
          (if is-healthy
              `(lambda (power)
@@ -525,9 +643,9 @@
         (successors (plist-get plist :successors))
         (rated-fuse-current (plist-get plist :rated-fuse-current))
         (grid
-         `((category . grid)
+         `((category . grid-connection-point)
            (id       . ,id)
-           (name     . "grid")
+           (name     . "grid-connection-point")
            (rated-fuse-current . ,rated-fuse-current))))
 
     (log.trace (format "Adding grid connection %s" id))

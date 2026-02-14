@@ -12,6 +12,10 @@
   (setq comp--id--counter (+ comp--id--counter 1)))
 
 
+(defun reactive-power-symbol-from-id (id)
+  (intern (format "component-reactive-power-%s" id)))
+
+
 (defun power-symbol-from-id (id)
   (intern (format "component-power-%s" id)))
 
@@ -36,8 +40,20 @@
   (intern (format "component-bounds-check-func-%s" id)))
 
 
+(defun reactive-bounds-check-func-symbol-from-id (id)
+  (intern (format "component-reactive-bounds-check-func-%s" id)))
+
+
+(defun set-reactive-power-func-symbol-from-id (id)
+  (intern (format "component-set-reactive-power-func-%s" id)))
+
+
 (defun set-power-func-symbol-from-id (id)
   (intern (format "component-set-power-func-%s" id)))
+
+
+(defun reset-power-func-symbol-from-id (id)
+  (intern (format "component-reset-power-func-%s" id)))
 
 
 (defun add-to-connections-alist (id-from id-to)
@@ -68,6 +84,27 @@
       (if-let ((power (alist-get 'power successor)))
           (setq expr (cons power expr))))
     (when expr (cons '+ expr))))
+
+
+(defun make-per-phase-power-expr (successors &optional alist-key)
+  (let ((p1-expr ())
+        (p2-expr ())
+        (p3-expr ())
+        (alist-key (or alist-key 'per-phase-power)))
+    (dolist (successor successors)
+      (when-let ((per-phase-power (alist-get alist-key successor)))
+        (setq p1-expr (cons `(car ,per-phase-power) p1-expr))
+        (setq p2-expr (cons `(cadr ,per-phase-power) p2-expr))
+        (setq p3-expr (cons `(caddr ,per-phase-power) p3-expr))))
+    (when p1-expr
+      (setq p1-expr (cons '+ p1-expr))
+      (setq p2-expr (cons '+ p2-expr))
+      (setq p3-expr (cons '+ p3-expr))
+      (list 'list p1-expr p2-expr p3-expr))))
+
+
+(defun make-per-phase-reactive-power-expr (successors)
+  (make-per-phase-power-expr successors 'per-phase-reactive-power))
 
 
 (defun make-current-expr (successors)
@@ -121,7 +158,8 @@
 
 
 (defun set-power-active (id power)
-  (let* ((power-symbol (power-symbol-from-id id))
+  (let* (;; TODO: drop unused? power-symbol
+         (power-symbol (power-symbol-from-id id))
          (bounds-check-func (eval (bounds-check-func-symbol-from-id id)))
          (set-power-func (eval (set-power-func-symbol-from-id id)))
          (power (ftruncate power)))
@@ -132,7 +170,30 @@
           nil)
         (let ((err (format "Requested power %f is out of bounds for component id %d" power id)))
           (log.warn err)
+          ;; TODO: switch to throw instead of returning error string
           err))))
+
+
+(defun set-power-reactive (id reactive-power)
+  (let* ((reactive-bounds-check-func (eval (reactive-bounds-check-func-symbol-from-id id)))
+         (set-reactive-power-func (eval (set-reactive-power-func-symbol-from-id id)))
+         (reactive-power (ftruncate reactive-power)))
+
+    (if (funcall reactive-bounds-check-func reactive-power)
+        (progn
+          (funcall set-reactive-power-func reactive-power)
+          nil)
+        (let ((err (format "Requested reactive power %f is out of bounds for component id %d" reactive-power id)))
+          (log.warn err)
+          ;; TODO: switch to throw instead of returning error string
+          err))))
+
+
+(defun reset-power-active (id)
+  (let* ((reset-power-func (eval (reset-power-func-symbol-from-id id))))
+    (if reset-power-func
+        (funcall reset-power-func)
+      (log.warn "No reset power function found for component id %d" id))))
 
 
 (defun component-data-maker (data-alist defaults-alist keys)
@@ -149,21 +210,6 @@
     (eval (list 'lambda '(_) `(quote ,args-alist)))))
 
 
-(defun calc-per-phase-current (power)
-  ;; pf = w / (v * a)
-  ;; a = w / (v * pf)
-  ;; a = (* w (/ voltage total-voltage)) / (v * pf)
-  (if (numberp power)
-      (let ((sum-voltage (seq-reduce '+ voltage-per-phase 0.0))
-            (vp1 (car voltage-per-phase))
-            (vp2 (cadr voltage-per-phase))
-            (vp3 (caddr voltage-per-phase)))
-        (list (/ (* power (/ vp1 sum-voltage)) (* vp1 (car power-factor-per-phase)))
-              (/ (* power (/ vp2 sum-voltage)) (* vp2 (cadr power-factor-per-phase)))
-              (/ (* power (/ vp3 sum-voltage)) (* vp3 (caddr power-factor-per-phase)))))
-    '(0.0 0.0 0.0)))
-
-
 (defun ac-current-from-power (power)
   (if (numberp power)
       (let ((sum-voltage (seq-reduce '+ voltage-per-phase 0.0))
@@ -173,6 +219,35 @@
         (list (/ (* power (/ vp1 sum-voltage)) vp1)
               (/ (* power (/ vp2 sum-voltage)) vp2)
               (/ (* power (/ vp3 sum-voltage)) vp3)))
+    '(0.0 0.0 0.0)))
+
+
+(defun ac-current-from-per-phase-power (per-phase-power)
+  (if (consp per-phase-power)
+        (list (/ (car per-phase-power) (car voltage-per-phase))
+              (/ (cadr per-phase-power) (cadr voltage-per-phase))
+              (/ (caddr per-phase-power) (caddr voltage-per-phase)))
+      '(0.0 0.0 0.0)))
+
+
+(defun calc-apparent-power (power reactive-power)
+  (if (and (numberp power)
+           (numberp reactive-power))
+        (let ((per-phase-power (calc-per-phase-power power))
+              (per-phase-reactive-power (calc-per-phase-power reactive-power)))
+          (calc-per-phase-apparent-power per-phase-power per-phase-reactive-power))
+        '(0.0 0.0 0.0)))
+
+
+(defun calc-per-phase-apparent-power (per-phase-power per-phase-reactive-power)
+  (if (and (consp per-phase-power)
+           (consp per-phase-reactive-power))
+      (list (sqrt (+ (expt (car per-phase-power) 2)
+                     (expt (car per-phase-reactive-power) 2)))
+            (sqrt (+ (expt (cadr per-phase-power) 2)
+                     (expt (cadr per-phase-reactive-power) 2)))
+            (sqrt (+ (expt (caddr per-phase-power) 2)
+                     (expt (caddr per-phase-reactive-power) 2))))
     '(0.0 0.0 0.0)))
 
 
@@ -186,17 +261,17 @@
 (defun is-healthy-battery (bat)
   (let ((comp-state (alist-get 'component-state bat))
         (relay-state (alist-get 'relay-state bat)))
-    (and (or (eq comp-state 'idle)
+    (and (or (eq comp-state 'ready)
              (eq comp-state 'charging)
              (eq comp-state 'discharging))
-         (eq relay-state 'closed))))
+         (eq relay-state 'relay-closed))))
 
 (defun is-healthy-meter (met)
-  (eq (alist-get 'component-state met) 'ok))
+  (eq (alist-get 'component-state met) 'ready))
 
 (defun is-healthy-inverter (inv)
   (let ((comp-state (alist-get 'component-state inv)))
-    (or (eq comp-state 'idle)
+    (or (eq comp-state 'ready)
         (eq comp-state 'charging)
         (eq comp-state 'discharging))))
 
@@ -206,14 +281,14 @@
     (and (or (eq comp-state 'ready)
              (eq comp-state 'charging)
              (eq comp-state 'discharging))
-         (eq cable-state 'ev-locked))))
+         (eq cable-state 'ev-charging-cable-locked-at-ev))))
 
 (defun power->component-state (power)
   (cond
     ((not (numberp power)) 'error)
     ((> power 0.0) 'charging)
     ((< power 0.0) 'discharging)
-    (:else         'idle)))
+    (:else         'ready)))
 
 (defun power->ev-component-state (power)
   (cond

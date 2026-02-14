@@ -1,35 +1,62 @@
+mod time;
+
 use rand::Rng;
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr, time::Duration};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    path::Path,
+    rc::Rc,
+    str::FromStr,
+    time::Duration,
+};
 
 use crate::proto::{
-    common::{
-        components::{BatteryType, ComponentCategory, EvChargerType, InverterType},
+    common::v1alpha8::{
+        grid::{DeliveryArea, EnergyMarketCodeType},
         metrics::{
-            electrical::{ac::AcPhase, Ac, Dc},
-            Bounds, Metric, MetricAggregation,
+            Bounds, Metric, MetricSample, MetricValueVariant, SimpleMetricValue,
+            metric_value_variant,
+        },
+        microgrid::{
+            MicrogridStatus,
+            electrical_components::{
+                Battery, BatteryType, ElectricalComponent, ElectricalComponentCategory,
+                ElectricalComponentCategorySpecificInfo, ElectricalComponentConnection,
+                ElectricalComponentStateCode, ElectricalComponentStateSnapshot,
+                ElectricalComponentTelemetry, EvCharger, EvChargerType, GridConnectionPoint,
+                Inverter, InverterType, MetricConfigBounds,
+                electrical_component_category_specific_info::Kind,
+            },
         },
     },
-    microgrid::{
-        battery, component, component_data, ev_charger, grid, inverter, meter, Component,
-        ComponentData, ComponentList, Connection, ConnectionList, MicrogridMetadata, Location,
+    microgrid::v1alpha18::{
+        GetMicrogridResponse, ListElectricalComponentConnectionsRequest,
+        ListElectricalComponentConnectionsResponse, ListElectricalComponentsRequest,
+        ListElectricalComponentsResponse, ReceiveElectricalComponentTelemetryStreamResponse,
     },
 };
 use notify::{RecommendedWatcher, Watcher};
 use prost_types::Timestamp;
-use tulisp::{destruct_bind, intern, list, Error, ErrorKind, TulispContext, TulispObject};
+use tulisp::{Error, TulispContext, TulispObject, intern, list};
 
-type CompDataMaker =
-    fn(&mut TulispContext, &TulispObject, &Symbols) -> Result<ComponentData, Error>;
+type CompDataMaker = fn(
+    &mut TulispContext,
+    &TulispObject,
+    &Symbols,
+) -> Result<ReceiveElectricalComponentTelemetryStreamResponse, Error>;
 
 intern! {
     #[derive(Clone)]
     pub(crate) struct Symbols {
+        state_update_interval_ms: "state-update-interval-ms",
+        reactive_power: "reactive-power",
+        power: "power",
+        name: "name",
         id: "id",
         soc: "soc",
-        name: "name",
         data: "data",
         type_: "type",
-        power: "power",
+        status: "status",
         stream: "stream",
         voltage: "voltage",
         current: "current",
@@ -44,19 +71,24 @@ intern! {
         cable_state: "cable-state",
         socket_addr: "socket-addr",
         ac_frequency: "ac-frequency",
+        component_state: "component-state",
+        set_power_reactive: "set-power-reactive",
+        enterprise_id: "enterprise-id",
         microgrid_id: "microgrid-id",
+        delivery_area: "delivery-area",
         inclusion_lower: "inclusion-lower",
         inclusion_upper: "inclusion-upper",
         exclusion_lower: "exclusion-lower",
         exclusion_upper: "exclusion-upper",
         per_phase_power: "per-phase-power",
-        component_state: "component-state",
         components_alist: "components-alist",
         set_power_active: "set-power-active",
+        create_timestamp: "create-timestamp",
         connections_alist: "connections-alist",
         rated_fuse_current: "rated-fuse-current",
+        reset_power_active: "reset-power-active",
         state_update_functions: "state-update-functions",
-        state_update_interval_ms: "state-update-interval-ms",
+        per_phase_reactive_power: "per-phase-reactive-power",
         retain_requests_duration_ms: "retain-requests-duration-ms",
     }
 }
@@ -73,6 +105,8 @@ pub struct Config {
     /// Component ID -> last power update time.
     last_formula_update_time: Rc<RefCell<std::time::Instant>>,
 
+    default_request_duration: Cell<Option<Duration>>,
+
     symbols: Symbols,
 }
 
@@ -82,16 +116,12 @@ unsafe impl Send for Config {}
 unsafe impl Sync for Config {}
 
 macro_rules! alist_get_as {
-    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{
-        alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn())
-    }};
+    ($ctx: expr, $rest:expr, $key:expr, $as_fn:ident) => {{ alist_get_as!($ctx, $rest, $key).and_then(|x| x.$as_fn()) }};
     ($ctx: expr, $rest:expr, $key:expr, eval++$as_fn:ident) => {{
         let out = alist_get_as!($ctx, $rest, $key);
-        out.and_then(|x| $ctx.eval_and_then(&x, |x| x.$as_fn()))
+        out.and_then(|x| $ctx.eval_and_then(&x, |_, x| x.$as_fn()))
     }};
-    ($ctx: expr, $rest:expr, $key:expr) => {{
-        tulisp::lists::alist_get($ctx, $key, $rest, None, None, None)
-    }};
+    ($ctx: expr, $rest:expr, $key:expr) => {{ tulisp::lists::alist_get($ctx, $key, $rest, None, None, None) }};
 }
 
 macro_rules! alist_get_f32 {
@@ -116,16 +146,13 @@ macro_rules! alist_get_3_phase {
         };
         (
             items
-                .car()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .car_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .cadr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .cadr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
             items
-                .caddr()
-                .and_then(|x| $ctx.eval_and_then(&x, |x| x.as_float()))
+                .caddr_and_then(|x| $ctx.eval_and_then(&x, |_, x| x.as_float()))
                 .unwrap_or_default() as f32,
         )
     }};
@@ -155,45 +182,76 @@ fn make_component_from_alist(
     ctx: &mut TulispContext,
     alist: &TulispObject,
     symbols: &Symbols,
-) -> Result<Component, Error> {
+) -> Result<ElectricalComponent, Error> {
     let id = alist_get_as!(ctx, alist, &symbols.id, as_int)? as u64;
     let name = alist_get_as!(ctx, alist, &symbols.name, as_string).unwrap_or_default();
-    let Some(category) = enum_from_alist::<ComponentCategory>(ctx, alist, &symbols.category, false)
+    let Some(category) =
+        enum_from_alist::<ElectricalComponentCategory>(ctx, alist, &symbols.category, false)
     else {
-        return Err(Error::new(
-            tulisp::ErrorKind::Uninitialized,
-            format!("Invalid component category for component {}", id),
-        ));
+        return Err(Error::invalid_argument(format!(
+            "Invalid component category for component {}",
+            id
+        )));
     };
 
-    let metadata = match category {
-        ComponentCategory::Inverter => {
-            enum_from_alist::<InverterType>(ctx, alist, &symbols.type_, false)
-                .map(|typ| component::Metadata::Inverter(inverter::Metadata { r#type: typ as i32 }))
-        }
-        ComponentCategory::Battery => {
-            enum_from_alist::<BatteryType>(ctx, alist, &symbols.type_, false)
-                .map(|typ| component::Metadata::Battery(battery::Metadata { r#type: typ as i32 }))
-        }
-        ComponentCategory::EvCharger => {
-            enum_from_alist::<EvChargerType>(ctx, alist, &symbols.type_, false).map(|typ| {
-                component::Metadata::EvCharger(ev_charger::Metadata { r#type: typ as i32 })
-            })
-        }
-        ComponentCategory::Grid => Some(component::Metadata::Grid(grid::Metadata {
-            rated_fuse_current: alist_get_u32!(ctx, alist, &symbols.rated_fuse_current),
+    let kind = match category {
+        ElectricalComponentCategory::Inverter => Some(Kind::Inverter(Inverter {
+            r#type: enum_from_alist::<InverterType>(ctx, alist, &symbols.type_, false)
+                .map(|typ| typ as i32)
+                .unwrap_or_default(),
         })),
+        ElectricalComponentCategory::Battery => Some(Kind::Battery(Battery {
+            r#type: enum_from_alist::<BatteryType>(ctx, alist, &symbols.type_, false)
+                .map(|typ| typ as i32)
+                .unwrap_or_default(),
+        })),
+        ElectricalComponentCategory::EvCharger => Some(Kind::EvCharger(EvCharger {
+            r#type: enum_from_alist::<EvChargerType>(ctx, alist, &symbols.type_, false)
+                .map(|typ| typ as i32)
+                .unwrap_or_default(),
+        })),
+        ElectricalComponentCategory::GridConnectionPoint => {
+            Some(Kind::GridConnectionPoint(GridConnectionPoint {
+                rated_fuse_current: alist_get_u32!(ctx, alist, &symbols.rated_fuse_current),
+            }))
+        }
         _ => None,
     };
 
-    let comp = Component {
+    let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
+    let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
+
+    // Copy active bounds to reactive bounds.
+    let reactive_upper = inclusion_lower.abs().max(inclusion_upper.abs());
+    let reactive_lower = -reactive_upper;
+
+    let comp = ElectricalComponent {
         id,
         name,
         category: category as i32,
-        metadata,
-
+        microgrid_id: 0, // TODO: Add microgrid_id
+        category_specific_info: Some(ElectricalComponentCategorySpecificInfo { kind }),
+        // status: todo!(),  // TODO: Add status
+        // operational_lifetime: todo!(),
+        metric_config_bounds: vec![
+            MetricConfigBounds {
+                metric: Metric::AcPowerActive as i32,
+                config_bounds: Some(Bounds {
+                    lower: Some(inclusion_lower),
+                    upper: Some(inclusion_upper),
+                }),
+            },
+            MetricConfigBounds {
+                metric: Metric::AcPowerReactive as i32,
+                config_bounds: Some(Bounds {
+                    lower: Some(reactive_lower),
+                    upper: Some(reactive_upper),
+                }),
+            },
+        ],
         ..Default::default()
     };
+
     Ok(comp)
 }
 
@@ -213,6 +271,7 @@ impl Config {
             ctx: Rc::new(RefCell::new(ctx)),
             stream_methods: Rc::new(RefCell::new(HashMap::new())),
             last_formula_update_time: Rc::new(RefCell::new(now)),
+            default_request_duration: Cell::new(None),
             symbols,
         }
     }
@@ -341,6 +400,9 @@ Invalid socket-addr.  Add a config line in this format:
     }
 
     pub fn retain_requests_duration(&self) -> Duration {
+        if let Some(dur) = self.default_request_duration.get() {
+            return dur;
+        }
         let dur_ms = self
             .symbols
             .retain_requests_duration_ms
@@ -348,62 +410,146 @@ Invalid socket-addr.  Add a config line in this format:
             .and_then(|x| x.as_int())
             .unwrap_or(5000);
 
-        Duration::from_millis(dur_ms as u64)
+        let dur = Duration::from_millis(dur_ms as u64);
+        self.default_request_duration.set(Some(dur));
+        dur
     }
 
-    pub fn metadata(&self) -> Result<MicrogridMetadata, Error> {
-        let alist = self.symbols.metadata.get().unwrap_or_else(|_|TulispObject::nil());
+    pub fn metadata(&self) -> Result<GetMicrogridResponse, Error> {
+        let alist = self
+            .symbols
+            .metadata
+            .get()
+            .unwrap_or_else(|_| TulispObject::nil());
 
         let microgrid_id = alist_get_as!(
             &mut self.ctx.borrow_mut(),
             &alist,
             &self.symbols.microgrid_id,
             as_int
-        ).unwrap_or_default() as u64;
-        let location = alist_get_as!(
+        )
+        .unwrap_or_default() as u64;
+
+        let enterprise_id = alist_get_as!(
             &mut self.ctx.borrow_mut(),
             &alist,
-            &self.symbols.location
-        ).unwrap_or_default();
+            &self.symbols.enterprise_id,
+            as_int
+        )
+        .unwrap_or_default() as u64;
 
-        let latitude = location.car()?.as_float().map(|x| Some(x)).unwrap_or(None);
-        let longitude = location.cadr()?.as_float().map(|x| Some(x)).unwrap_or(None);
+        let delivery_area = if let Ok(delivery_area) = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.delivery_area
+        ) {
+            Some(DeliveryArea {
+                code: delivery_area.car()?.as_string().unwrap_or_default(),
+                code_type: delivery_area
+                    .cadr()?
+                    .as_symbol()?
+                    .parse::<EnergyMarketCodeType>()
+                    .unwrap_or_default() as i32,
+            })
+        } else {
+            None
+        };
 
-        Ok(MicrogridMetadata {
-            microgrid_id,
-            location: if latitude.is_some() || longitude.is_some() {
-                Some(Location {
-                    latitude: latitude.unwrap_or_default() as f32,
-                    longitude: longitude.unwrap_or_default() as f32,
-                })
-            } else {
-                None
-            },
+        let location = if let Ok(location) =
+            alist_get_as!(&mut self.ctx.borrow_mut(), &alist, &self.symbols.location)
+        {
+            Some(crate::proto::common::v1alpha8::types::Location {
+                latitude: location.car()?.as_float().unwrap_or_default() as f32,
+                longitude: location.cadr()?.as_float().unwrap_or_default() as f32,
+                country_code: location.caddr()?.as_string().unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        let status = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.status,
+            as_symbol
+        )
+        .unwrap_or_default()
+        .parse::<MicrogridStatus>()
+        .unwrap_or_default() as i32;
+
+        let create_timestamp = if let Ok(iso_ts) = alist_get_as!(
+            &mut self.ctx.borrow_mut(),
+            &alist,
+            &self.symbols.create_timestamp,
+            as_string
+        ) {
+            Some(Timestamp::from_str(iso_ts.as_str()).unwrap_or_default())
+        } else {
+            None
+        };
+
+        Ok(GetMicrogridResponse {
+            microgrid: Some(crate::proto::common::v1alpha8::microgrid::Microgrid {
+                id: microgrid_id,
+                enterprise_id,
+                name: format!("Microgrid {}", microgrid_id),
+                delivery_area,
+                location,
+                status,
+                create_timestamp,
+            }),
         })
     }
 
-    pub fn components(&self) -> Result<ComponentList, Error> {
+    pub fn components(
+        &self,
+        request: ListElectricalComponentsRequest,
+    ) -> Result<ListElectricalComponentsResponse, Error> {
         let alists = self.symbols.components_alist.get()?;
-        Ok(ComponentList {
-            components: alists
+
+        Ok(ListElectricalComponentsResponse {
+            electrical_components: alists
                 .base_iter()
                 .map(|x| {
                     make_component_from_alist(&mut self.ctx.borrow_mut(), &x, &self.symbols)
                         .unwrap()
                 })
+                .filter(|x| {
+                    (request.electrical_component_ids.contains(&x.id)
+                        || request.electrical_component_ids.is_empty())
+                        && (request
+                            .electrical_component_categories
+                            .contains(&x.category)
+                            || request.electrical_component_categories.is_empty())
+                })
                 .collect(),
         })
     }
 
-    pub fn connections(&self) -> Result<ConnectionList, Error> {
+    pub fn connections(
+        &self,
+        request: ListElectricalComponentConnectionsRequest,
+    ) -> Result<ListElectricalComponentConnectionsResponse, Error> {
         let alist = self.symbols.connections_alist.get()?;
-        Ok(ConnectionList {
-            connections: alist
+        Ok(ListElectricalComponentConnectionsResponse {
+            electrical_component_connections: alist
                 .base_iter()
-                .map(|x| Connection {
-                    start: x.car().and_then(|x| x.as_int()).unwrap() as u64,
-                    end: x.cdr().and_then(|x| x.as_int()).unwrap() as u64,
+                .map(|x| ElectricalComponentConnection {
+                    source_electrical_component_id: x.car().and_then(|x| x.as_int()).unwrap()
+                        as u64,
+                    destination_electrical_component_id: x.cdr().and_then(|x| x.as_int()).unwrap()
+                        as u64,
                     ..Default::default()
+                })
+                .filter(|x| {
+                    (request
+                        .source_electrical_component_ids
+                        .contains(&x.source_electrical_component_id)
+                        || request.source_electrical_component_ids.is_empty())
+                        && (request
+                            .destination_electrical_component_ids
+                            .contains(&x.destination_electrical_component_id)
+                            || request.destination_electrical_component_ids.is_empty())
                 })
                 .collect(),
         })
@@ -415,10 +561,38 @@ Invalid socket-addr.  Add a config line in this format:
             &list![(component_id as i64).into(), (power as f64).into()]?,
         )?;
 
+        // TODO: use throw from tulisp to return errors
         if !res.null() {
-            return Err(Error::new(tulisp::ErrorKind::Undefined, res.as_string()?).with_trace(res));
+            return Err(Error::lisp_error(res.as_string()?).with_trace(res));
         }
         Ok(())
+    }
+
+    pub fn set_power_reactive(&self, component_id: u64, power: f32) -> Result<(), Error> {
+        let res = self.ctx.borrow_mut().funcall(
+            &self.symbols.set_power_reactive,
+            &list![(component_id as i64).into(), (power as f64).into()]?,
+        )?;
+
+        // TODO: use throw from tulisp to return errors
+        if !res.null() {
+            return Err(Error::lisp_error(res.as_string()?).with_trace(res));
+        }
+        Ok(())
+    }
+
+    pub fn reset_power_active(&self, component_id: u64) -> Result<(), Error> {
+        #[inline(always)]
+        fn work(config: &Config, component_id: u64) -> Result<(), Error> {
+            config.ctx.borrow_mut().funcall(
+                &config.symbols.reset_power_active,
+                &list![(component_id as i64).into()]?,
+            )?;
+
+            Ok(())
+        }
+        work(self, component_id)
+            .inspect_err(|e| log::error!("Tulisp error:\n{}", e.format(&self.ctx.borrow())))
     }
 
     fn get_conv_function(&self, component_id: u64, comp: &TulispObject) -> CompDataMaker {
@@ -426,19 +600,22 @@ Invalid socket-addr.  Add a config line in this format:
             .unwrap()
             .category()
         {
-            ComponentCategory::Battery => Self::battery_data,
-            ComponentCategory::Inverter => Self::inverter_data,
-            ComponentCategory::Meter => Self::meter_data,
-            ComponentCategory::EvCharger => Self::ev_charger_data,
-            _ => Err(Error::new(
-                tulisp::ErrorKind::Uninitialized,
-                format!("Invalid component category for component {}", component_id),
-            ))
+            ElectricalComponentCategory::Battery => Self::battery_data,
+            ElectricalComponentCategory::Inverter => Self::inverter_data,
+            ElectricalComponentCategory::Meter => Self::meter_data,
+            ElectricalComponentCategory::EvCharger => Self::ev_charger_data,
+            _ => Err(Error::invalid_argument(format!(
+                "Invalid component category for component {}",
+                component_id
+            )))
             .unwrap(),
         }
     }
 
-    pub fn get_component_data(&self, component_id: u64) -> Result<(ComponentData, u64), Error> {
+    pub fn get_component_data(
+        &self,
+        component_id: u64,
+    ) -> Result<(ReceiveElectricalComponentTelemetryStreamResponse, u64), Error> {
         let mut stream_methods = self.stream_methods.borrow_mut();
         let (data_method, interval, conv_function) =
             if let Some((data_method, interval, conv_function)) = stream_methods.get(&component_id)
@@ -503,11 +680,11 @@ impl Config {
         ctx: &mut TulispContext,
         alist: &TulispObject,
         symbols: &Symbols,
-    ) -> Result<ComponentData, Error> {
+    ) -> Result<ReceiveElectricalComponentTelemetryStreamResponse, Error> {
         let id = alist_get_as!(ctx, &alist, &symbols.id, eval ++ as_int)? as u64;
         let capacity = alist_get_f32!(ctx, &alist, &symbols.capacity);
 
-        let soc_avg = alist_get_f32!(ctx, &alist, &symbols.soc);
+        let soc = alist_get_f32!(ctx, &alist, &symbols.soc);
         let soc_lower = alist_get_f32!(ctx, &alist, &symbols.soc_lower);
         let soc_upper = alist_get_f32!(ctx, &alist, &symbols.soc_upper);
 
@@ -520,69 +697,125 @@ impl Config {
         let exclusion_lower = alist_get_f32!(ctx, &alist, &symbols.exclusion_lower);
         let exclusion_upper = alist_get_f32!(ctx, &alist, &symbols.exclusion_upper);
 
-        let component_state =
-            enum_from_alist::<battery::ComponentState>(ctx, &alist, &symbols.component_state, true)
-                .unwrap_or_default() as i32;
-        let relay_state =
-            enum_from_alist::<battery::RelayState>(ctx, &alist, &symbols.relay_state, true)
-                .unwrap_or_default() as i32;
+        let component_state = enum_from_alist::<ElectricalComponentStateCode>(
+            ctx,
+            &alist,
+            &symbols.component_state,
+            true,
+        )
+        .unwrap_or_default() as i32;
+        let relay_state = enum_from_alist::<ElectricalComponentStateCode>(
+            ctx,
+            &alist,
+            &symbols.relay_state,
+            true,
+        )
+        .unwrap_or_default() as i32;
 
-        return Ok(ComponentData {
-            ts: Some(Timestamp::from(std::time::SystemTime::now())),
-            id,
-            data: Some(component_data::Data::Battery(battery::Battery {
-                properties: Some(battery::Properties {
-                    capacity,
+        let now = Some(Timestamp::from(std::time::SystemTime::now()));
+
+        Ok(ReceiveElectricalComponentTelemetryStreamResponse {
+            telemetry: Some(ElectricalComponentTelemetry {
+                electrical_component_id: id,
+                metric_samples: vec![
+                    MetricSample {
+                        sample_time: now,
+                        metric: Metric::BatteryCapacity as i32,
+                        value: Some(MetricValueVariant {
+                            metric_value_variant: Some(
+                                metric_value_variant::MetricValueVariant::SimpleMetric(
+                                    SimpleMetricValue { value: capacity },
+                                ),
+                            ),
+                        }),
+                        ..Default::default() // TODO: Add bounds and states
+                    },
+                    MetricSample {
+                        sample_time: now,
+                        metric: Metric::BatterySocPct as i32,
+                        value: Some(MetricValueVariant {
+                            metric_value_variant: Some(
+                                metric_value_variant::MetricValueVariant::SimpleMetric(
+                                    SimpleMetricValue { value: soc },
+                                ),
+                            ),
+                        }),
+                        bounds: vec![Bounds {
+                            lower: Some(soc_lower),
+                            upper: Some(soc_upper),
+                        }],
+                        ..Default::default() // TODO: Add bounds and states
+                    },
+                    MetricSample {
+                        sample_time: now,
+                        metric: Metric::DcVoltage as i32,
+                        value: Some(MetricValueVariant {
+                            metric_value_variant: Some(
+                                metric_value_variant::MetricValueVariant::SimpleMetric(
+                                    SimpleMetricValue { value: voltage },
+                                ),
+                            ),
+                        }),
+                        ..Default::default() // TODO: Add bounds and states
+                    },
+                    MetricSample {
+                        sample_time: now,
+                        metric: Metric::DcCurrent as i32,
+                        value: Some(MetricValueVariant {
+                            metric_value_variant: Some(
+                                metric_value_variant::MetricValueVariant::SimpleMetric(
+                                    SimpleMetricValue { value: current },
+                                ),
+                            ),
+                        }),
+                        ..Default::default() // TODO: Add bounds and states
+                    },
+                    MetricSample {
+                        sample_time: now,
+                        metric: Metric::DcPower as i32,
+                        value: Some(MetricValueVariant {
+                            metric_value_variant: Some(
+                                metric_value_variant::MetricValueVariant::SimpleMetric(
+                                    SimpleMetricValue { value: power },
+                                ),
+                            ),
+                        }),
+                        bounds: if exclusion_lower == 0.0 && exclusion_upper == 0.0 {
+                            vec![Bounds {
+                                lower: Some(inclusion_lower),
+                                upper: Some(inclusion_upper),
+                            }]
+                        } else {
+                            vec![
+                                Bounds {
+                                    lower: Some(inclusion_lower),
+                                    upper: Some(exclusion_lower),
+                                },
+                                Bounds {
+                                    lower: Some(exclusion_upper),
+                                    upper: Some(inclusion_upper),
+                                },
+                            ]
+                        },
+                        ..Default::default() // TODO: Add bounds and states
+                    },
+                ],
+                state_snapshots: vec![ElectricalComponentStateSnapshot {
+                    origin_time: now,
+                    states: vec![component_state, relay_state],
                     ..Default::default()
-                }),
-                state: Some(battery::State {
-                    component_state,
-                    relay_state,
-                }),
-                errors: vec![],
-                data: Some(battery::Data {
-                    soc: Some(MetricAggregation {
-                        avg: soc_avg,
-                        system_inclusion_bounds: Some(Bounds {
-                            lower: soc_lower,
-                            upper: soc_upper,
-                        }),
-                        ..Default::default()
-                    }),
-                    dc: Some(Dc {
-                        voltage: Some(Metric {
-                            value: voltage,
-                            ..Default::default()
-                        }),
-                        current: Some(Metric {
-                            value: current,
-                            ..Default::default()
-                        }),
-                        power: Some(Metric {
-                            value: power,
-                            system_inclusion_bounds: Some(Bounds {
-                                lower: inclusion_lower,
-                                upper: inclusion_upper,
-                            }),
-                            system_exclusion_bounds: Some(Bounds {
-                                lower: exclusion_lower,
-                                upper: exclusion_upper,
-                            }),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-            })),
-        });
+                }],
+                ..Default::default()
+            }),
+        })
     }
 
     fn ac_from_alist(
         ctx: &mut TulispContext,
+        now: Option<Timestamp>,
         alist: &TulispObject,
         symbols: &Symbols,
-    ) -> Result<Ac, Error> {
+    ) -> Result<Vec<MetricSample>, Error> {
         let frequency = symbols
             .ac_frequency
             .get()
@@ -591,92 +824,225 @@ impl Config {
         let current = alist_get_3_phase!(ctx, &alist, &symbols.current);
         let voltage = alist_get_3_phase!(ctx, &alist, &symbols.voltage);
         let per_phase_power = alist_get_3_phase!(ctx, &alist, &symbols.per_phase_power);
-
         let power = alist_get_f32!(ctx, &alist, &symbols.power);
+        let per_phase_reactive_power =
+            alist_get_3_phase!(ctx, &alist, &symbols.per_phase_reactive_power);
+        let reactive_power = alist_get_f32!(ctx, &alist, &symbols.reactive_power);
 
         let inclusion_lower = alist_get_f32!(ctx, &alist, &symbols.inclusion_lower);
         let inclusion_upper = alist_get_f32!(ctx, &alist, &symbols.inclusion_upper);
         let exclusion_lower = alist_get_f32!(ctx, &alist, &symbols.exclusion_lower);
         let exclusion_upper = alist_get_f32!(ctx, &alist, &symbols.exclusion_upper);
 
-        Ok(Ac {
-            frequency: Some(Metric {
-                value: frequency,
-                ..Default::default()
-            }),
-            current: Some(Metric {
-                value: current.0 + current.1 + current.2,
-                ..Default::default()
-            }),
-            power_active: Some(Metric {
-                value: power,
-                system_inclusion_bounds: Some(Bounds {
-                    lower: inclusion_lower,
-                    upper: inclusion_upper,
-                }),
-                system_exclusion_bounds: Some(Bounds {
-                    lower: exclusion_lower,
-                    upper: exclusion_upper,
+        Ok(vec![
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcFrequency as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: frequency,
+                        }),
+                    ),
                 }),
                 ..Default::default()
-            }),
-            phase_1: Some(AcPhase {
-                voltage: Some(Metric {
-                    value: voltage.0,
-                    ..Default::default()
-                }),
-                current: Some(Metric {
-                    value: current.0,
-                    ..Default::default()
-                }),
-                power_active: Some(Metric {
-                    value: per_phase_power.0,
-                    ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcVoltagePhase1N as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: voltage.0,
+                        }),
+                    ),
                 }),
                 ..Default::default()
-            }),
-            phase_2: Some(AcPhase {
-                voltage: Some(Metric {
-                    value: voltage.1,
-                    ..Default::default()
-                }),
-                current: Some(Metric {
-                    value: current.1,
-                    ..Default::default()
-                }),
-                power_active: Some(Metric {
-                    value: per_phase_power.1,
-                    ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcVoltagePhase2N as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: voltage.1,
+                        }),
+                    ),
                 }),
                 ..Default::default()
-            }),
-            phase_3: Some(AcPhase {
-                voltage: Some(Metric {
-                    value: voltage.2,
-                    ..Default::default()
-                }),
-                current: Some(Metric {
-                    value: current.2,
-                    ..Default::default()
-                }),
-                power_active: Some(Metric {
-                    value: per_phase_power.2,
-                    ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcVoltagePhase3N as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: voltage.2,
+                        }),
+                    ),
                 }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        })
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcCurrentPhase1 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: current.0,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcCurrentPhase2 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: current.1,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcCurrentPhase3 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: current.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase1 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.0,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase2 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.1,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactivePhase3 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_reactive_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerActivePhase1 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_power.0,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerActivePhase2 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_power.1,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerActivePhase3 as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: per_phase_power.2,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerReactive as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: reactive_power,
+                        }),
+                    ),
+                }),
+                ..Default::default()
+            },
+            MetricSample {
+                sample_time: now,
+                metric: Metric::AcPowerActive as i32,
+                value: Some(MetricValueVariant {
+                    metric_value_variant: Some(
+                        metric_value_variant::MetricValueVariant::SimpleMetric(SimpleMetricValue {
+                            value: power,
+                        }),
+                    ),
+                }),
+                bounds: if exclusion_lower == 0.0 && exclusion_upper == 0.0 {
+                    vec![Bounds {
+                        lower: Some(inclusion_lower),
+                        upper: Some(inclusion_upper),
+                    }]
+                } else {
+                    vec![
+                        Bounds {
+                            lower: Some(inclusion_lower),
+                            upper: Some(exclusion_lower),
+                        },
+                        Bounds {
+                            lower: Some(exclusion_upper),
+                            upper: Some(inclusion_upper),
+                        },
+                    ]
+                },
+                ..Default::default()
+            },
+        ])
     }
 
     fn inverter_data(
         ctx: &mut TulispContext,
         alist: &TulispObject,
         symbols: &Symbols,
-    ) -> Result<ComponentData, Error> {
+    ) -> Result<ReceiveElectricalComponentTelemetryStreamResponse, Error> {
         let id = alist_get_as!(ctx, &alist, &symbols.id, eval ++ as_int)? as u64;
 
-        let component_state = enum_from_alist::<inverter::ComponentState>(
+        let component_state = enum_from_alist::<ElectricalComponentStateCode>(
             ctx,
             &alist,
             &symbols.component_state,
@@ -684,57 +1050,61 @@ impl Config {
         )
         .unwrap_or_default() as i32;
 
-        return Ok(ComponentData {
-            ts: Some(Timestamp::from(std::time::SystemTime::now())),
-            id,
-            data: Some(component_data::Data::Inverter(inverter::Inverter {
-                state: Some(inverter::State { component_state }),
-                data: Some(inverter::Data {
-                    ac: Some(Self::ac_from_alist(ctx, &alist, symbols)?),
+        let now = Some(Timestamp::from(std::time::SystemTime::now()));
+
+        Ok(ReceiveElectricalComponentTelemetryStreamResponse {
+            telemetry: Some(ElectricalComponentTelemetry {
+                electrical_component_id: id,
+                metric_samples: Self::ac_from_alist(ctx, now, alist, symbols)?,
+                state_snapshots: vec![ElectricalComponentStateSnapshot {
+                    origin_time: now,
+                    states: vec![component_state],
                     ..Default::default()
-                }),
+                }],
                 ..Default::default()
-            })),
-        });
+            }),
+        })
     }
 
     fn meter_data(
         ctx: &mut TulispContext,
         alist: &TulispObject,
         symbols: &Symbols,
-    ) -> Result<ComponentData, Error> {
+    ) -> Result<ReceiveElectricalComponentTelemetryStreamResponse, Error> {
         let id = alist_get_as!(ctx, &alist, &symbols.id, eval ++ as_int)? as u64;
 
-        return Ok(ComponentData {
-            ts: Some(Timestamp::from(std::time::SystemTime::now())),
-            id,
-            data: Some(component_data::Data::Meter(meter::Meter {
-                state: Some(meter::State {
-                    component_state: enum_from_alist::<meter::ComponentState>(
-                        ctx,
-                        &alist,
-                        &symbols.component_state,
-                        true,
-                    )
-                    .unwrap_or_default() as i32,
-                }),
-                data: Some(meter::Data {
-                    ac: Some(Self::ac_from_alist(ctx, &alist, symbols)?),
+        let now = Some(Timestamp::from(std::time::SystemTime::now()));
+
+        Ok(ReceiveElectricalComponentTelemetryStreamResponse {
+            telemetry: Some(ElectricalComponentTelemetry {
+                electrical_component_id: id,
+                metric_samples: Self::ac_from_alist(ctx, now, alist, symbols)?,
+                state_snapshots: vec![ElectricalComponentStateSnapshot {
+                    origin_time: now,
+                    states: vec![
+                        enum_from_alist::<ElectricalComponentStateCode>(
+                            ctx,
+                            &alist,
+                            &symbols.component_state,
+                            true,
+                        )
+                        .unwrap_or_default() as i32,
+                    ],
                     ..Default::default()
-                }),
+                }],
                 ..Default::default()
-            })),
-        });
+            }),
+        })
     }
 
     fn ev_charger_data(
         ctx: &mut TulispContext,
         alist: &TulispObject,
         symbols: &Symbols,
-    ) -> Result<ComponentData, Error> {
+    ) -> Result<ReceiveElectricalComponentTelemetryStreamResponse, Error> {
         let id = alist_get_as!(ctx, &alist, &symbols.id, eval ++ as_int)? as u64;
 
-        let component_state = enum_from_alist::<ev_charger::ComponentState>(
+        let component_state = enum_from_alist::<ElectricalComponentStateCode>(
             ctx,
             &alist,
             &symbols.component_state,
@@ -742,53 +1112,44 @@ impl Config {
         )
         .unwrap_or_default() as i32;
 
-        let cable_state =
-            enum_from_alist::<ev_charger::CableState>(ctx, &alist, &symbols.cable_state, true)
-                .unwrap_or_default() as i32;
+        let cable_state = enum_from_alist::<ElectricalComponentStateCode>(
+            ctx,
+            &alist,
+            &symbols.cable_state,
+            true,
+        )
+        .unwrap_or_default() as i32;
 
-        return Ok(ComponentData {
-            ts: Some(Timestamp::from(std::time::SystemTime::now())),
-            id,
-            data: Some(component_data::Data::EvCharger(ev_charger::EvCharger {
-                state: Some(ev_charger::State {
-                    component_state,
-                    cable_state,
-                }),
-                data: Some(ev_charger::Data {
-                    ac: Some(Self::ac_from_alist(ctx, &alist, symbols)?),
+        let now = Some(Timestamp::from(std::time::SystemTime::now()));
+
+        Ok(ReceiveElectricalComponentTelemetryStreamResponse {
+            telemetry: Some(ElectricalComponentTelemetry {
+                electrical_component_id: id,
+                metric_samples: vec![],
+                state_snapshots: vec![ElectricalComponentStateSnapshot {
+                    origin_time: now,
+                    states: vec![component_state, cable_state],
                     ..Default::default()
-                }),
+                }],
                 ..Default::default()
-            })),
-        });
+            }),
+        })
     }
 }
 
 fn add_functions(ctx: &mut TulispContext) {
-    macro_rules! log_impl {
-        ($level:ident) => {
-            |ctx, args| {
-                destruct_bind!((msg) = args);
-                log::$level!("{}", ctx.eval(&msg)?.as_string()?);
-                Ok(TulispObject::nil())
+    ctx.add_function("log.info", |msg: String| log::info!("{msg}"))
+        .add_function("log.warn", |msg: String| log::warn!("{msg}"))
+        .add_function("log.error", |msg: String| log::error!("{msg}"))
+        .add_function("log.debug", |msg: String| log::debug!("{msg}"))
+        .add_function("log.trace", |msg: String| log::trace!("{msg}"))
+        .add_function("random", |limit: Option<i64>| {
+            if let Some(limit) = limit {
+                rand::thread_rng().gen_range(0..limit)
+            } else {
+                rand::thread_rng().r#gen()
             }
-        };
-    }
+        });
 
-    ctx.add_special_form("log.info", log_impl!(info));
-    ctx.add_special_form("log.warn", log_impl!(warn));
-    ctx.add_special_form("log.error", log_impl!(error));
-    ctx.add_special_form("log.debug", log_impl!(debug));
-    ctx.add_special_form("log.trace", log_impl!(trace));
-
-    ctx.add_special_form("random", |ctx, args| {
-        destruct_bind!((&optional limit) = args);
-        let rnd = if limit.null() {
-            rand::thread_rng().gen()
-        } else {
-            let limit = ctx.eval(&limit)?.try_into()?;
-            rand::thread_rng().gen_range(0..limit)
-        };
-        Ok(rnd.into())
-    });
+    crate::lisp::time::add(ctx);
 }

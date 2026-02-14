@@ -1,51 +1,52 @@
-use self::{
-    common::components::{BatteryType, ComponentCategory, EvChargerType, InverterType},
-    microgrid::{battery, ev_charger, inverter, meter},
+use common::v1alpha8::{
+    grid::EnergyMarketCodeType,
+    microgrid::{MicrogridStatus, electrical_components::ElectricalComponentStateCode},
 };
 
+use crate::proto::common::v1alpha8::microgrid::electrical_components::{
+    BatteryType, ElectricalComponentCategory, EvChargerType, InverterType,
+};
+
+#[allow(clippy::doc_lazy_continuation, dead_code)]
 pub mod common {
-    pub mod components {
-        tonic::include_proto!("frequenz.api.common.components");
-    }
+    pub mod v1alpha8 {
+        pub mod grid {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.grid");
+        }
 
-    pub mod metrics {
-        tonic::include_proto!("frequenz.api.common.metrics");
+        pub mod microgrid {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.microgrid");
+            pub mod electrical_components {
+                #![allow(clippy::derive_partial_eq_without_eq)]
+                tonic::include_proto!(
+                    "frequenz.api.common.v1alpha8.microgrid.electrical_components"
+                );
+            }
+            pub mod sensors {
+                #![allow(clippy::derive_partial_eq_without_eq)]
+                tonic::include_proto!("frequenz.api.common.v1alpha8.microgrid.sensors");
+            }
+        }
 
-        pub mod electrical {
-            tonic::include_proto!("frequenz.api.common.metrics.electrical");
+        pub mod metrics {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.metrics");
+        }
+
+        pub mod types {
+            #![allow(clippy::derive_partial_eq_without_eq)]
+            tonic::include_proto!("frequenz.api.common.v1alpha8.types");
         }
     }
 }
 
+#[allow(clippy::doc_lazy_continuation)]
 pub mod microgrid {
-    tonic::include_proto!("frequenz.api.microgrid");
-
-    pub mod common {
-        tonic::include_proto!("frequenz.api.microgrid.common");
-    }
-
-    pub mod grid {
-        tonic::include_proto!("frequenz.api.microgrid.grid");
-    }
-
-    pub mod inverter {
-        tonic::include_proto!("frequenz.api.microgrid.inverter");
-    }
-
-    pub mod battery {
-        tonic::include_proto!("frequenz.api.microgrid.battery");
-    }
-
-    pub mod ev_charger {
-        tonic::include_proto!("frequenz.api.microgrid.ev_charger");
-    }
-
-    pub mod meter {
-        tonic::include_proto!("frequenz.api.microgrid.meter");
-    }
-
-    pub mod sensor {
-        tonic::include_proto!("frequenz.api.microgrid.sensor");
+    pub mod v1alpha18 {
+        #![allow(clippy::derive_partial_eq_without_eq)]
+        tonic::include_proto!("frequenz.api.microgrid.v1alpha18");
     }
 }
 
@@ -68,14 +69,17 @@ macro_rules! impl_enum_from_str {
 }
 
 impl_enum_from_str!(
-    (ComponentCategory, "COMPONENT_CATEGORY_"),
+    (
+        ElectricalComponentCategory,
+        "ELECTRICAL_COMPONENT_CATEGORY_"
+    ),
     (BatteryType, "BATTERY_TYPE_"),
     (InverterType, "INVERTER_TYPE_"),
     (EvChargerType, "EV_CHARGER_TYPE_"),
-    (meter::ComponentState, "COMPONENT_STATE_"),
-    (battery::ComponentState, "COMPONENT_STATE_"),
-    (battery::RelayState, "RELAY_STATE_"),
-    (inverter::ComponentState, "COMPONENT_STATE_"),
-    (ev_charger::ComponentState, "COMPONENT_STATE_"),
-    (ev_charger::CableState, "CABLE_STATE_"),
+    (
+        ElectricalComponentStateCode,
+        "ELECTRICAL_COMPONENT_STATE_CODE_"
+    ),
+    (EnergyMarketCodeType, "ENERGY_MARKET_CODE_TYPE_"),
+    (MicrogridStatus, "MICROGRID_STATUS_"),
 );

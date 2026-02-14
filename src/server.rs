@@ -1,47 +1,36 @@
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::lisp::Config;
-use crate::proto::common::components::ComponentCategory;
-use crate::proto::common::components::InverterType;
-use crate::proto::microgrid::microgrid_server::Microgrid;
-use crate::proto::microgrid::{
-    component, ComponentData, ComponentFilter, ComponentIdParam, ComponentList, ConnectionFilter,
-    ConnectionList, MicrogridMetadata, SetBoundsParam, SetPowerActiveParam, SetPowerReactiveParam,
+
+use crate::proto::microgrid::v1alpha18::{
+    AckElectricalComponentErrorRequest, AugmentElectricalComponentBoundsRequest,
+    AugmentElectricalComponentBoundsResponse, GetMicrogridResponse,
+    ListElectricalComponentConnectionsRequest, ListElectricalComponentConnectionsResponse,
+    ListElectricalComponentsRequest, ListElectricalComponentsResponse, ListSensorRequest,
+    ListSensorsResponse, PowerType, PutElectricalComponentInStandbyRequest,
+    ReceiveElectricalComponentTelemetryStreamRequest,
+    ReceiveElectricalComponentTelemetryStreamResponse, ReceiveSensorTelemetryStreamRequest,
+    ReceiveSensorTelemetryStreamResponse, SetElectricalComponentPowerRequest,
+    SetElectricalComponentPowerRequestStatus, SetElectricalComponentPowerResponse,
+    StartElectricalComponentRequest, StopElectricalComponentRequest, microgrid_server,
 };
 
 pub struct MicrogridServer {
     pub config: Config,
     pub timeout_tracker: crate::timeout_tracker::TimeoutTracker,
-    pub bat_inverter_ids: HashSet<u64>,
 }
 
 impl MicrogridServer {
     pub fn new(config: Config) -> Self {
-        let bat_inv_ids = config
-            .components()
-            .unwrap()
-            .components
-            .iter()
-            .filter(|c| {
-                c.category == ComponentCategory::Inverter as i32
-                    && match c.metadata.as_ref().unwrap() {
-                        component::Metadata::Inverter(inverter) => {
-                            inverter.r#type == InverterType::Battery as i32
-                        }
-                        _ => false,
-                    }
-            })
-            .map(|c| c.id)
-            .collect();
+        let timeout_tracker = crate::timeout_tracker::TimeoutTracker::new();
+
         let new = Self {
             config,
-            timeout_tracker: crate::timeout_tracker::TimeoutTracker::new(),
-            bat_inverter_ids: bat_inv_ids,
+            timeout_tracker,
         };
 
         new.start_timeout_tracker();
@@ -54,10 +43,10 @@ impl MicrogridServer {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                let expired_ids = timeout_tracker.remove_expired(config.retain_requests_duration());
+                let expired_ids = timeout_tracker.remove_expired();
                 for id in expired_ids {
                     log::info!("Request timeout for component {}.", id);
-                    config.set_power_active(id, 0.0).unwrap();
+                    config.reset_power_active(id).unwrap();
                 }
             }
         });
@@ -65,57 +54,125 @@ impl MicrogridServer {
 }
 
 #[tonic::async_trait]
-impl Microgrid for MicrogridServer {
-    async fn get_microgrid_metadata(
+impl microgrid_server::Microgrid for MicrogridServer {
+    type ReceiveElectricalComponentTelemetryStreamStream = Pin<
+        Box<
+            dyn Stream<
+                    Item = Result<ReceiveElectricalComponentTelemetryStreamResponse, tonic::Status>,
+                > + Send,
+        >,
+    >;
+    type ReceiveSensorTelemetryStreamStream = Pin<
+        Box<dyn Stream<Item = Result<ReceiveSensorTelemetryStreamResponse, tonic::Status>> + Send>,
+    >;
+
+    type SetElectricalComponentPowerStream = Pin<
+        Box<dyn Stream<Item = Result<SetElectricalComponentPowerResponse, tonic::Status>> + Send>,
+    >;
+
+    async fn get_microgrid(
         &self,
         _request: tonic::Request<()>,
-    ) -> std::result::Result<tonic::Response<MicrogridMetadata>, tonic::Status> {
+    ) -> std::result::Result<tonic::Response<GetMicrogridResponse>, tonic::Status> {
         let metadata = self.config.metadata().unwrap();
         Ok(tonic::Response::new(metadata))
     }
 
-    async fn list_components(
+    async fn list_electrical_components(
         &self,
-        _request: tonic::Request<ComponentFilter>,
-    ) -> std::result::Result<tonic::Response<ComponentList>, tonic::Status> {
-        let components = self.config.components().unwrap();
+        _request: tonic::Request<ListElectricalComponentsRequest>,
+    ) -> std::result::Result<tonic::Response<ListElectricalComponentsResponse>, tonic::Status> {
+        let request = _request.into_inner();
+        let components = self.config.components(request).unwrap();
         Ok(tonic::Response::new(components))
     }
-    async fn list_connections(
+
+    async fn list_electrical_component_connections(
         &self,
-        _request: tonic::Request<ConnectionFilter>,
-    ) -> std::result::Result<tonic::Response<ConnectionList>, tonic::Status> {
-        let connections = self.config.connections().unwrap();
+        _request: tonic::Request<ListElectricalComponentConnectionsRequest>,
+    ) -> std::result::Result<
+        tonic::Response<ListElectricalComponentConnectionsResponse>,
+        tonic::Status,
+    > {
+        let request = _request.into_inner();
+        let connections = self.config.connections(request).unwrap();
         Ok(tonic::Response::new(connections))
     }
 
-    async fn set_power_active(
+    async fn set_electrical_component_power(
         &self,
-        _request: tonic::Request<SetPowerActiveParam>,
-    ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-        let request = _request.into_inner();
-        if self.bat_inverter_ids.contains(&request.component_id) {
-            self.timeout_tracker.add(request.component_id);
-        }
-        let res = self
-            .config
-            .set_power_active(request.component_id, request.power);
+        request: tonic::Request<SetElectricalComponentPowerRequest>,
+    ) -> std::result::Result<tonic::Response<Self::SetElectricalComponentPowerStream>, tonic::Status>
+    {
+        let request = request.into_inner();
+        let Ok(power_type) = PowerType::try_from(request.power_type) else {
+            return Err(tonic::Status::invalid_argument(format!(
+                "Invalid power type: {}",
+                request.power_type
+            )));
+        };
+        let res = match power_type {
+            PowerType::Unspecified => {
+                return Err(tonic::Status::invalid_argument(
+                    "Power type cannot be UNSPECIFIED.",
+                ));
+            }
+            PowerType::Active => self
+                .config
+                .set_power_active(request.electrical_component_id, request.power),
+            PowerType::Reactive => self
+                .config
+                .set_power_reactive(request.electrical_component_id, request.power),
+        };
 
         if let Err(err) = res {
             log::error!("Tulisp error:\n{}", err.format(&self.config.ctx.borrow()));
             return Err(tonic::Status::failed_precondition(err.desc()));
         }
-        Ok(tonic::Response::new(()))
+
+        // TODO: when to reset? after latest request, or after older of the two
+        // power types?
+        let duration = if let Some(dur) = request.request_lifetime {
+            if dur < 10 || dur > 60 * 15 {
+                return Err(tonic::Status::invalid_argument(
+                    "Request lifetime must be between 10 seconds and 15 minutes.",
+                ));
+            }
+            Duration::from_secs(dur)
+        } else {
+            self.config.retain_requests_duration()
+        };
+        self.timeout_tracker
+            .add(request.electrical_component_id, duration);
+
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let output_stream = ReceiverStream::new(rx);
+
+        tokio::spawn(async move {
+            if let Err(e) = tx
+                .send(Ok(SetElectricalComponentPowerResponse {
+                    valid_until_time: None,
+                    status: SetElectricalComponentPowerRequestStatus::Success as i32,
+                }))
+                .await
+            {
+                log::error!("Failed to send SetElectricalComponentPowerResponse: {e}");
+            }
+        });
+
+        Ok(tonic::Response::new(
+            Box::pin(output_stream) as Self::SetElectricalComponentPowerStream
+        ))
     }
 
-    type StreamComponentDataStream =
-        Pin<Box<dyn Stream<Item = Result<ComponentData, tonic::Status>> + Send>>;
-
-    async fn stream_component_data(
+    async fn receive_electrical_component_telemetry_stream(
         &self,
-        request: tonic::Request<ComponentIdParam>,
-    ) -> std::result::Result<tonic::Response<Self::StreamComponentDataStream>, tonic::Status> {
-        let id = request.into_inner().id;
+        request: tonic::Request<ReceiveElectricalComponentTelemetryStreamRequest>,
+    ) -> std::result::Result<
+        tonic::Response<Self::ReceiveElectricalComponentTelemetryStreamStream>,
+        tonic::Status,
+    > {
+        let component_id = request.into_inner().electrical_component_id;
 
         let (tx, rx) = tokio::sync::mpsc::channel(128);
         let config = self.config.clone();
@@ -124,7 +181,7 @@ impl Microgrid for MicrogridServer {
             let mut last_msg_ts = SystemTime::now();
             loop {
                 let (data, interval) = config
-                    .get_component_data(id as u64)
+                    .get_component_data(component_id as u64)
                     .map_err(|e| {
                         log::error!("Tulisp error:\n{}", e.format(&config.ctx.borrow()));
                         e
@@ -132,7 +189,7 @@ impl Microgrid for MicrogridServer {
                     .unwrap();
 
                 if let Err(err) = tx.send(Result::<_, tonic::Status>::Ok(data)).await {
-                    log::debug!("stream_component_data(component_id={id}): {err}");
+                    log::debug!("stream_component_data(component_id={component_id}): {err}");
                     break;
                 }
 
@@ -147,7 +204,7 @@ impl Microgrid for MicrogridServer {
 
         let output_stream = ReceiverStream::new(rx);
         Ok(tonic::Response::new(
-            Box::pin(output_stream) as Self::StreamComponentDataStream
+            Box::pin(output_stream) as Self::ReceiveElectricalComponentTelemetryStreamStream
         ))
     }
 
@@ -156,57 +213,47 @@ impl Microgrid for MicrogridServer {
     // Unused methods
     //
     //
-    async fn can_stream_data(
+    async fn list_sensors(
         &self,
-        _request: tonic::Request<ComponentIdParam>,
-    ) -> std::result::Result<tonic::Response<bool>, tonic::Status> {
+        _request: tonic::Request<ListSensorRequest>,
+    ) -> std::result::Result<tonic::Response<ListSensorsResponse>, tonic::Status> {
         todo!()
     }
-    async fn add_exclusion_bounds(
+    async fn receive_sensor_telemetry_stream(
         &self,
-        _request: tonic::Request<SetBoundsParam>,
-    ) -> std::result::Result<tonic::Response<::prost_types::Timestamp>, tonic::Status> {
+        _request: tonic::Request<ReceiveSensorTelemetryStreamRequest>,
+    ) -> std::result::Result<tonic::Response<Self::ReceiveSensorTelemetryStreamStream>, tonic::Status>
+    {
         todo!()
     }
-    async fn add_inclusion_bounds(
+    async fn augment_electrical_component_bounds(
         &self,
-        _request: tonic::Request<SetBoundsParam>,
-    ) -> std::result::Result<tonic::Response<::prost_types::Timestamp>, tonic::Status> {
+        _request: tonic::Request<AugmentElectricalComponentBoundsRequest>,
+    ) -> std::result::Result<tonic::Response<AugmentElectricalComponentBoundsResponse>, tonic::Status>
+    {
         todo!()
     }
-    async fn set_power_reactive(
+    async fn start_electrical_component(
         &self,
-        _request: tonic::Request<SetPowerReactiveParam>,
+        _request: tonic::Request<StartElectricalComponentRequest>,
     ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
         todo!()
     }
-    async fn start(
+    async fn put_electrical_component_in_standby(
         &self,
-        _request: tonic::Request<ComponentIdParam>,
+        _request: tonic::Request<PutElectricalComponentInStandbyRequest>,
     ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
         todo!()
     }
-    async fn hot_standby(
+    async fn stop_electrical_component(
         &self,
-        _request: tonic::Request<ComponentIdParam>,
+        _request: tonic::Request<StopElectricalComponentRequest>,
     ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
         todo!()
     }
-    async fn cold_standby(
+    async fn ack_electrical_component_error(
         &self,
-        _request: tonic::Request<ComponentIdParam>,
-    ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-        todo!()
-    }
-    async fn stop(
-        &self,
-        _request: tonic::Request<ComponentIdParam>,
-    ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
-        todo!()
-    }
-    async fn error_ack(
-        &self,
-        _request: tonic::Request<ComponentIdParam>,
+        _request: tonic::Request<AckElectricalComponentErrorRequest>,
     ) -> std::result::Result<tonic::Response<()>, tonic::Status> {
         todo!()
     }
